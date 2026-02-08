@@ -1,5 +1,5 @@
 ﻿function onTemplateChanged(app, varargin)
-%ONTEMPLATECHANGED Handle template switch from tree/event payload.
+%ONTEMPLATECHANGED  处理模板切换（来自树节点或事件负载）
 
 tplId = control.parseTemplateId(varargin{:});
 tpl = templates.getById(tplId);
@@ -21,6 +21,17 @@ p = params.validate(p0, schema);
 if isprop(app, 'Params')
     app.Params = p;
 end
+
+if isprop(app, 'SpeedSlider') && isgraphics(app.SpeedSlider) && isfield(p, 'speedScale')
+    app.SpeedSlider.Value = double(p.speedScale);
+end
+if isprop(app, 'SpeedValueField') && isgraphics(app.SpeedValueField) && isfield(p, 'speedScale')
+    app.SpeedValueField.Value = double(p.speedScale);
+end
+if isprop(app, 'SpeedValueLabel') && isgraphics(app.SpeedValueLabel) && isfield(p, 'speedScale')
+    app.SpeedValueLabel.Text = sprintf('%.2fx', double(p.speedScale));
+end
+
 if isprop(app, 'State')
     app.State = engine.reset(app.State, p);
 end
@@ -31,3 +42,4 @@ if isprop(app, 'State')
     ui.render(app, app.State);
 end
 end
+
