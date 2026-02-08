@@ -1,16 +1,18 @@
 function p = validate(p, schema)
-%VALIDATE  参数校验与归一化：补默认 + clamp + 类型修正
+%VALIDATE  参数校验与归一化：补默认 + 类型修正 + 范围裁剪
 %
 % 输入
 %   p      (1,1) struct : 原始参数（可能缺字段、越界、类型不对）
 %   schema (1,1) struct : 参数定义（来自 params.schema_get）
 %
 % 输出
-%   p (1,1) struct : 合法参数（字段齐全、范围合法）
+%   p (1,1) struct : 合法参数（字段齐全、类型合法、范围合法）
 %
 % 说明
 %   - UI 不要自己 clamp；统一走这里，保证全局一致性。
-%   - 如果你希望“越界就报错”而不是 clamp，可以把 clamp 改成 error。
+%   - 字段类型由 schema.defs(i).type 决定（double/logical/enum）。
+%   - 只要存在 v0/thetaDeg 字段，就会补充派生量 vx0/vy0。
+%   - validate 不关心“模板业务意义”，只关心结构与类型合法性。
 %
 % 参见: params.schema_get, params.defaults
 
@@ -19,21 +21,156 @@ arguments
     schema (1,1) struct
 end
 
-% 1) 补字段 + 类型修正
+% 1) 补字段 + 类型修正 + 范围裁剪
+%    逐字段按 schema 定义执行：
+%    a) 缺字段 -> 用 default 补齐
+%    b) 按 type 归一化
+%    c) 数值字段执行区间裁剪
 for i = 1:numel(schema.defs)
     d = schema.defs(i);
-    if ~isfield(p, d.name)
-        p.(d.name) = d.default;
+    fieldName = char(d.name);
+
+    if ~isfield(p, fieldName)
+        p.(fieldName) = d.default;
     end
-    % 统一转为 double（你也可以按字段类型扩展）
-    p.(d.name) = double(p.(d.name));
+
+    v = p.(fieldName);
+    v = normalizeType(v, d);
+    if isfield(d, "type") && d.type == "double"
+        v = params.clamp(v, d.min, d.max);
+    end
+
+    p.(fieldName) = v;
 end
 
-% 2) clamp（范围裁剪）
-for i = 1:numel(schema.defs)
-    d = schema.defs(i);
-    v = p.(d.name);
-    p.(d.name) = params.clamp(v, d.min, d.max);
+% 2) particle 模板派生量：由 (v0, thetaDeg) 反推 (vx0, vy0)
+%    说明：这是几何派生，不改变速度大小，只分解方向分量。
+if hasField(p, "v0") && hasField(p, "thetaDeg")
+    thetaRad = deg2rad(double(p.thetaDeg));
+    p.vx0 = double(p.v0) * cos(thetaRad);
+    p.vy0 = double(p.v0) * sin(thetaRad);
 end
 
+% 3) 边界顺序修正（防止 xMin > xMax / yMin > yMax）
+%    说明：UI 输入顺序不可信，这里做最终防护。
+if hasField(p, "xMin") && hasField(p, "xMax") && p.xMin > p.xMax
+    tmp = p.xMin;
+    p.xMin = p.xMax;
+    p.xMax = tmp;
+end
+if hasField(p, "yMin") && hasField(p, "yMax") && p.yMin > p.yMax
+    tmp = p.yMin;
+    p.yMin = p.yMax;
+    p.yMax = tmp;
+end
+
+end
+
+function tf = hasField(s, name)
+%HASFIELD  安全字段检测（仅 struct 时返回 true）
+% 输入
+%   s    : 任意值
+%   name : 字段名
+% 输出
+%   tf   : 是否存在字段
+tf = isstruct(s) && isfield(s, name);
+end
+
+function v = normalizeType(vRaw, d)
+%NORMALIZETYPE  按 schema 类型分发归一化逻辑
+% 输入
+%   vRaw : 原始值（来自 UI 或上层 payload）
+%   d    : 单个 schema 定义项
+% 输出
+%   v    : 归一化后的值（类型与 d.type 一致）
+typeName = "double";
+if isfield(d, "type")
+    typeName = string(d.type);
+end
+
+switch typeName
+    case "logical"
+        v = toLogical(vRaw, logical(d.default));
+    case "enum"
+        v = toEnum(vRaw, string(d.default), string(d.options));
+    otherwise
+        v = toDouble(vRaw, double(d.default));
+end
+end
+
+function v = toDouble(vRaw, defaultValue)
+%TODOUBLE  将输入转换为有限标量 double，不合法则回退默认值
+% 输入
+%   vRaw         : 原始值（数值/字符串等）
+%   defaultValue : 兜底值
+% 输出
+%   v            : 有限 double 标量
+if isnumeric(vRaw) && isscalar(vRaw) && isfinite(vRaw)
+    v = double(vRaw);
+    return;
+end
+
+if isstring(vRaw) || ischar(vRaw)
+    tmp = str2double(string(vRaw));
+    if isfinite(tmp)
+        v = double(tmp);
+        return;
+    end
+end
+
+v = defaultValue;
+end
+
+function v = toLogical(vRaw, defaultValue)
+%TOLOGICAL  将输入转换为逻辑值，不合法则回退默认值
+% 输入
+%   vRaw         : 原始值（logical/数值/字符串）
+%   defaultValue : 兜底值
+% 输出
+%   v            : logical 标量
+if islogical(vRaw) && isscalar(vRaw)
+    v = logical(vRaw);
+    return;
+end
+
+if isnumeric(vRaw) && isscalar(vRaw) && isfinite(vRaw)
+    v = logical(vRaw ~= 0);
+    return;
+end
+
+if isstring(vRaw) || ischar(vRaw)
+    token = lower(strtrim(string(vRaw)));
+    if any(token == ["true","1","on","yes"])
+        v = true;
+        return;
+    end
+    if any(token == ["false","0","off","no"])
+        v = false;
+        return;
+    end
+end
+
+v = defaultValue;
+end
+
+function v = toEnum(vRaw, defaultValue, options)
+%TOENUM  将输入映射到枚举候选，不匹配则回退默认值
+% 输入
+%   vRaw         : 原始值
+%   defaultValue : 兜底值（应在 options 中）
+%   options      : 枚举候选（string 向量）
+% 输出
+%   v            : options 中的合法值
+if isempty(options)
+    v = defaultValue;
+    return;
+end
+
+token = strtrim(string(vRaw));
+idx = find(strcmpi(options, token), 1, "first");
+if isempty(idx)
+    v = defaultValue;
+else
+    v = options(idx);
+end
 end

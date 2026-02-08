@@ -1,5 +1,21 @@
 ﻿# 更新日志
 
+## 2026-02-08
+- 闭环：`apps/MainApp.m` 接通 M1 最小运行链路（模板树构建、参数组件挂载、回调绑定、`boot.startup` 启动初始化）。
+- 闭环：参数变化事件已联通 `control.onParamsChanged`，实现 `buildPayload -> validate -> applyPayload -> reset -> render`。
+- 优化：顶部速度控件并入参数链路，避免参数回调把 `speedScale` 覆盖回默认值。
+- 优化：`run.m` 补齐 `apps/src/m` 路径注入，降低开发态启动失败概率。
+- 测试：新增 `tests/smoke_m1_minimal_loop.m`，用于手动验证 M1 启动/改参/运行/重置四步。
+- 重构：模板注册表改为“汇总函数 + 单模板定义文件”结构，新增 src/+templates/+defs/M1.m。
+- 重构：src/+templates/registry.m 不再内联模板数据，统一从 src/+templates/+defs/*.m 汇总。
+- 优化：src/+templates/getById.m 增强空注册表/未注册 id 的错误信息，便于排查模板链路问题。
+- 修复：src/+control/parseTemplateId.m 默认模板兜底值改为 M1，与当前迁移阶段一致。
+- 文档：新增 docs/02_模板注册表规范.md，明确模板注册字段、目录约定与扩展步骤。
+- 参数：`params.schema_get` 增加类型元数据（double/logical/enum），并在 `particle` schema 中补齐 M1 参数集合。
+- 参数：`params.validate` 增强类型归一化、范围裁剪、边界顺序修正，并自动派生 `vx0/vy0`。
+- UI：`m/M1_for_test.m` 新增公共传参接口（`Value` / `getPayload` / `setPayload`）与 `PayloadChanged` 事件。
+- UI：`src/+ui/buildPayload.m` 与 `src/+ui/applyPayload.m` 接入自定义组件接口，未找到组件时回退到原有路径。
+
 ## 2026-02-06
 - 修复：`+UI/PanelRail.m` 与 `+Engine/RailSliderEngine.m` 中 R2/R3/R4 模式字符串乱码，恢复“阻尼减速/终端速度/功率验证”模式切换与事件链路一致性。
 - 修复：`+Services/SceneEngineRenderer.m` 为 R2 右上信息框补齐位置设置，恢复导轨参数信息可见。

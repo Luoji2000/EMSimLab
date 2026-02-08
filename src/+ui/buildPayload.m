@@ -3,23 +3,88 @@ function p = buildPayload(app)
 %
 % 说明
 %   - 这里不做校验，只“采集”
-%   - 你可以按 CurrentSchemaKey/EngineKey 决定读取哪些控件
-%   - UI 控件句柄命名建议与 params 字段对应（例如 app.BField -> B）
+%   - 优先读取支持 getPayload/setPayload 的自定义组件
+%   - 若未找到组件，则回退到 app.Params / ParamTab.UserData
+%
+% 读取优先级（由高到低）
+%   1) 自定义组件 getPayload()
+%   2) ParamTab.UserData
+%   3) app.Params
 
 arguments
     app
 end
 
-% 如果你的 UI 还没接好，这里先返回 app.Params 作为兜底
-p = app.Params;
+p = struct();
 
-% TODO: 示例（把实际控件名替换为你 UI 里的控件）
-% p.B   = app.BField.Value;
-% p.q   = app.QField.Value;
-% p.m   = app.MField.Value;
-% p.x0  = app.X0Field.Value;
-% p.y0  = app.Y0Field.Value;
-% p.vx0 = app.Vx0Field.Value;
-% p.vy0 = app.Vy0Field.Value;
+comp = findPayloadComponent(app);
+if ~isempty(comp)
+    try
+        % 自定义组件负责把分散控件聚合成统一 payload
+        p = comp.getPayload();
+        if isstruct(p)
+            return;
+        end
+    catch
+        % 组件读取失败时继续执行回退路径，避免中断主链路
+    end
+end
 
+if isprop(app, 'ParamTab') && isgraphics(app.ParamTab) && isstruct(app.ParamTab.UserData)
+    p = app.ParamTab.UserData;
+    return;
+end
+
+if isprop(app, 'Params') && isstruct(app.Params)
+    p = app.Params;
+end
+
+end
+
+function comp = findPayloadComponent(app)
+%FINDPAYLOADCOMPONENT  从 app 属性中查找支持 getPayload/setPayload 的组件
+% 输入
+%   app : App 实例
+% 输出
+%   comp: 命中的组件句柄；未找到则返回 []
+comp = [];
+
+if isempty(app)
+    return;
+end
+
+try
+    propNames = string(properties(app));
+catch
+    propNames = strings(0, 1);
+end
+
+for i = 1:numel(propNames)
+    name = propNames(i);
+    try
+        candidate = app.(name);
+    catch
+        continue;
+    end
+    if isPayloadComponent(candidate)
+        comp = candidate;
+        return;
+    end
+end
+end
+
+function tf = isPayloadComponent(candidate)
+%ISPAYLOADCOMPONENT  判断对象是否满足参数组件最小接口
+% 判定条件：
+%   - handle 且 isvalid
+%   - 同时具备 getPayload / setPayload 方法
+tf = false;
+if isempty(candidate) || ~isa(candidate, 'handle')
+    return;
+end
+try
+    tf = isvalid(candidate) && ismethod(candidate, 'getPayload') && ismethod(candidate, 'setPayload');
+catch
+    tf = false;
+end
 end
