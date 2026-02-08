@@ -11,6 +11,8 @@
         ParamTab            matlab.ui.container.Tab
         KnowledgeTab        matlab.ui.container.Tab
         LogTab              matlab.ui.container.Tab
+        LogGrid             matlab.ui.container.GridLayout
+        LogTextArea         matlab.ui.control.TextArea
         CenterTabs          matlab.ui.container.TabGroup
         SceneTab            matlab.ui.container.Tab
         sceneGrid           matlab.ui.container.GridLayout
@@ -22,6 +24,7 @@
         TemplateGrid        matlab.ui.container.GridLayout
         TemplateTree        matlab.ui.container.Tree
         TopBarGrid          matlab.ui.container.GridLayout
+        LogButton           matlab.ui.control.Button
         HelpButton          matlab.ui.control.Button
         ModeSwitch          matlab.ui.control.Switch
         ModeLabel           matlab.ui.control.Label
@@ -50,6 +53,11 @@
 
     properties (Access = private)
         ParamChangedListener = event.listener.empty
+        LogLines            string = strings(0, 1)
+        MaxLogLines         (1,1) double = 500
+        PlaybackTimer       = []
+        PlaybackPeriod      (1,1) double = 0.05
+        IsPlaying           (1,1) logical = false
     end
 
     % 组件初始化
@@ -163,6 +171,12 @@
             app.ModeSwitch.Layout.Column = 5;
             app.ModeSwitch.Value = '教学';
 
+            % 创建 LogButton
+            app.LogButton = uibutton(app.TopBarGrid, 'push');
+            app.LogButton.Layout.Row = 1;
+            app.LogButton.Layout.Column = 7;
+            app.LogButton.Text = '导出日志';
+
             % 创建 HelpButton
             app.HelpButton = uibutton(app.TopBarGrid, 'push');
             app.HelpButton.Layout.Row = 1;
@@ -215,6 +229,8 @@
             ylabel(app.SceneAxes, 'y (m)')
             app.SceneAxes.XGrid = 'on';
             app.SceneAxes.YGrid = 'on';
+            app.SceneAxes.DataAspectRatio = [1 1 1];
+            app.SceneAxes.DataAspectRatioMode = 'manual';
             app.SceneAxes.Layout.Row = 1;
             app.SceneAxes.Layout.Column = 1;
 
@@ -267,18 +283,32 @@
             app.LogTab = uitab(app.RightTabs);
             app.LogTab.Title = '日志';
 
+            % 创建 LogGrid
+            app.LogGrid = uigridlayout(app.LogTab);
+            app.LogGrid.ColumnWidth = {'1x'};
+            app.LogGrid.RowHeight = {'1x'};
+            app.LogGrid.Padding = [6 6 6 6];
+
+            % 创建 LogTextArea
+            app.LogTextArea = uitextarea(app.LogGrid);
+            app.LogTextArea.Layout.Row = 1;
+            app.LogTextArea.Layout.Column = 1;
+            app.LogTextArea.Editable = 'off';
+
             % 所有组件创建完成后再显示窗口
             app.ElectriSimUIFigure.Visible = 'on';
         end
 
         function initializeRuntimeWiring(app)
             %INITIALIZERUNTIMEWIRING  构建 M1 最小闭环接线
+            logger.logEvent(app, '信息', '应用接线开始', struct('entry', 'initializeRuntimeWiring'));
             app.buildTemplateTree();
             app.ensureParamComponent();
             app.bindUiCallbacks();
             boot.startup(app);
             app.syncSpeedWidgets(app.getSpeedScaleFromParams());
             app.selectTemplateNode(app.CurrentTemplateId);
+            logger.logEvent(app, '信息', '应用接线完成', struct('template', app.CurrentTemplateId));
         end
 
         function buildTemplateTree(app)
@@ -294,6 +324,7 @@
             end
 
             groups = unique(string({list.group}), 'stable');
+            tplCount = numel(list);
             for ig = 1:numel(groups)
                 g = groups(ig);
                 parentNode = uitreenode(app.TemplateTree, ...
@@ -308,6 +339,7 @@
                 end
             end
             expand(app.TemplateTree);
+            logger.logEvent(app, '信息', '模板树构建完成', struct('group_count', numel(groups), 'template_count', tplCount));
         end
 
         function ensureParamComponent(app)
@@ -320,6 +352,7 @@
             end
 
             if ~isempty(app.ParamComponent) && isa(app.ParamComponent, 'handle') && isvalid(app.ParamComponent)
+                logger.logEvent(app, '调试', '参数组件复用', struct('class_name', class(app.ParamComponent)));
                 return;
             end
 
@@ -327,13 +360,11 @@
                 app.ParamComponent = M1_for_test(app.ParamHostGrid);
                 app.ParamComponent.Layout.Row = 1;
                 app.ParamComponent.Layout.Column = 1;
+                propCount = numel(properties(app.ParamComponent));
+                logger.logEvent(app, '信息', '参数组件加载成功', struct('class_name', 'M1_for_test', 'property_count', propCount));
             else
                 app.ParamComponent = [];
-                hint = uilabel(app.ParamHostGrid);
-                hint.Layout.Row = 1;
-                hint.Layout.Column = 1;
-                hint.WordWrap = 'on';
-                hint.Text = '未找到 m/M1_for_test.m（参数组件未加载）';
+                logger.logEvent(app, '警告', '参数组件缺失', struct('class_name', 'M1_for_test'));
             end
 
             if ~isempty(app.ParamChangedListener) && isvalid(app.ParamChangedListener)
@@ -346,8 +377,10 @@
                         app.ParamComponent, ...
                         'PayloadChanged', ...
                         @(~,~)control.onParamsChanged(app));
+                    logger.logEvent(app, '信息', '参数组件监听已绑定', struct('event', 'PayloadChanged'));
                 catch
                     app.ParamChangedListener = event.listener.empty;
+                    logger.logEvent(app, '错误', '参数组件监听绑定失败', struct('event', 'PayloadChanged'));
                 end
             end
         end
@@ -357,24 +390,28 @@
             app.TemplateTree.SelectionChangedFcn = @(~, evt)control.onTemplateChanged(app, evt);
             app.PlayButton.ButtonPushedFcn = @(~,~)control.onPlay(app);
             app.ResetButton.ButtonPushedFcn = @(~,~)control.onReset(app);
-            app.PauseButton.ButtonPushedFcn = @(~,~)[];
+            app.PauseButton.ButtonPushedFcn = @(~,~)control.onPause(app);
 
             app.SpeedSlider.ValueChangedFcn = @(~,~)app.onSpeedSliderChanged();
             app.SpeedValueField.ValueChangedFcn = @(~,~)app.onSpeedFieldChanged();
             app.SpeedMinusButton.ButtonPushedFcn = @(~,~)app.bumpSpeed(-0.5);
             app.SpeedPlusButton.ButtonPushedFcn = @(~,~)app.bumpSpeed(0.5);
+            app.LogButton.ButtonPushedFcn = @(~,~)app.onExportLog();
         end
 
         function onSpeedSliderChanged(app)
             app.syncSpeedWidgets(app.SpeedSlider.Value);
+            logger.logEvent(app, '调试', '速度已修改', struct('source', 'slider', 'value', app.SpeedSlider.Value));
         end
 
         function onSpeedFieldChanged(app)
             app.syncSpeedWidgets(app.SpeedValueField.Value);
+            logger.logEvent(app, '调试', '速度已修改', struct('source', 'field', 'value', app.SpeedValueField.Value));
         end
 
         function bumpSpeed(app, delta)
             app.syncSpeedWidgets(app.SpeedSlider.Value + delta);
+            logger.logEvent(app, '调试', '速度步进调整', struct('delta', delta, 'value', app.SpeedSlider.Value));
         end
 
         function syncSpeedWidgets(app, speedValue)
@@ -448,16 +485,152 @@
             mDir = fullfile(root, 'm');
 
             if isfolder(srcDir) && isempty(which('boot.startup'))
-                addpath(srcDir);
+                addpath(srcDir, '-begin');
             end
             if isfolder(mDir) && isempty(which('M1_for_test'))
-                addpath(mDir);
+                addpath(mDir, '-begin');
             end
+        end
+
+        function appendLogLineImpl(app, line)
+            %APPENDLOGLINEIMPL  向日志缓冲区与 LogTextArea 追加一行文本
+            if nargin < 2
+                return;
+            end
+
+            app.LogLines(end+1, 1) = string(line);
+            if numel(app.LogLines) > app.MaxLogLines
+                app.LogLines = app.LogLines(end-app.MaxLogLines+1:end);
+            end
+
+            if isprop(app, 'LogTextArea') && isgraphics(app.LogTextArea)
+                app.LogTextArea.Value = cellstr(app.LogLines);
+            end
+        end
+
+        function onExportLog(app)
+            %ONEXPORTLOG  导出当前日志到文本文件
+            if isempty(app.LogLines)
+                logger.logEvent(app, '警告', '导出日志失败', struct('reason', '当前无日志内容'));
+                return;
+            end
+
+            defaultName = sprintf('emsimlab_log_%s.txt', datestr(now, 'yyyymmdd_HHMMSS'));
+            [fileName, folder] = uiputfile('*.txt', '导出日志', defaultName);
+            if isequal(fileName, 0) || isequal(folder, 0)
+                logger.logEvent(app, '信息', '导出日志已取消', struct());
+                return;
+            end
+
+            outputPath = fullfile(folder, fileName);
+            fid = fopen(outputPath, 'w', 'n', 'UTF-8');
+            if fid < 0
+                logger.logEvent(app, '错误', '导出日志失败', struct('reason', '文件打开失败', 'path', outputPath));
+                return;
+            end
+
+            cleaner = onCleanup(@()fclose(fid)); %#ok<NASGU>
+            for i = 1:numel(app.LogLines)
+                fprintf(fid, '%s\n', app.LogLines(i));
+            end
+
+            logger.logEvent(app, '信息', '导出日志成功', struct('path', outputPath, 'line_count', numel(app.LogLines)));
+        end
+
+        function ensurePlaybackTimer(app)
+            %ENSUREPLAYBACKTIMER  懒创建播放定时器，并保持参数一致
+            %
+            % 设计说明
+            %   1) 使用 fixedSpacing，保证播放节奏稳定
+            %   2) BusyMode=drop，防止渲染慢导致回调堆积
+            %   3) TimerFcn 只做一步推进，主逻辑仍在 control.onTick
+            if ~isempty(app.PlaybackTimer) && isvalid(app.PlaybackTimer)
+                if abs(app.PlaybackTimer.Period - app.PlaybackPeriod) > 1e-9
+                    app.PlaybackTimer.Period = app.PlaybackPeriod;
+                end
+                return;
+            end
+
+            app.PlaybackTimer = timer( ...
+                'ExecutionMode', 'fixedSpacing', ...
+                'Period', app.PlaybackPeriod, ...
+                'BusyMode', 'drop', ...
+                'TimerFcn', @(~,~)control.onTick(app), ...
+                'ErrorFcn', @(~,evt)app.onPlaybackTimerError(evt));
+        end
+
+        function onPlaybackTimerError(app, evt)
+            %ONPLAYBACKTIMERERROR  定时器异常处理，防止卡死在播放态
+            app.IsPlaying = false;
+            if ~isempty(app.PlaybackTimer) && isvalid(app.PlaybackTimer) ...
+                    && strcmpi(app.PlaybackTimer.Running, 'on')
+                stop(app.PlaybackTimer);
+            end
+
+            messageText = "未知错误";
+            if nargin >= 2 && isstruct(evt) && isfield(evt, 'Data')
+                if isfield(evt.Data, 'message')
+                    messageText = string(evt.Data.message);
+                elseif isfield(evt.Data, 'Message')
+                    messageText = string(evt.Data.Message);
+                end
+            end
+            logger.logEvent(app, '错误', '播放定时器异常', struct('reason', messageText));
         end
     end
 
     % App 创建与销毁
     methods (Access = public)
+
+        function appendLogLine(app, line)
+            %APPENDLOGLINE  对外公开的日志追加入口（供 logger.logEvent 调用）
+            app.appendLogLineImpl(line);
+        end
+
+        function startPlayback(app)
+            %STARTPLAYBACK  启动连续播放（若已播放则忽略）
+            if app.IsPlaying
+                logger.logEvent(app, '调试', '播放已在进行', struct());
+                return;
+            end
+
+            app.ensurePlaybackTimer();
+            if isempty(app.PlaybackTimer) || ~isvalid(app.PlaybackTimer)
+                logger.logEvent(app, '错误', '播放启动失败', struct('reason', '定时器未就绪'));
+                return;
+            end
+
+            if ~strcmpi(app.PlaybackTimer.Running, 'on')
+                start(app.PlaybackTimer);
+            end
+            app.IsPlaying = true;
+            logger.logEvent(app, '信息', '开始连续播放', struct('dt', app.PlaybackPeriod));
+        end
+
+        function pausePlayback(app)
+            %PAUSEPLAYBACK  暂停连续播放（若未播放则忽略）
+            if ~app.IsPlaying
+                logger.logEvent(app, '调试', '播放当前已暂停', struct());
+                return;
+            end
+
+            if ~isempty(app.PlaybackTimer) && isvalid(app.PlaybackTimer) ...
+                    && strcmpi(app.PlaybackTimer.Running, 'on')
+                stop(app.PlaybackTimer);
+            end
+            app.IsPlaying = false;
+            logger.logEvent(app, '信息', '连续播放已暂停', struct());
+        end
+
+        function tf = isPlaybackRunning(app)
+            %ISPLAYBACKRUNNING  查询连续播放状态
+            tf = app.IsPlaying;
+        end
+
+        function dt = getPlaybackPeriod(app)
+            %GETPLAYBACKPERIOD  获取连续播放单帧步长（秒）
+            dt = app.PlaybackPeriod;
+        end
 
         % 构造函数
         function app = MainApp
@@ -472,6 +645,8 @@
             % 向 App Designer 注册 app 对象
             registerApp(app, app.ElectriSimUIFigure)
 
+            logger.logEvent(app, '信息', '应用已创建', struct('class_name', class(app)));
+
             if nargout == 0
                 clear app
             end
@@ -479,6 +654,14 @@
 
         % App 删除前执行
         function delete(app)
+            logger.logEvent(app, '信息', '应用销毁', struct());
+
+            if ~isempty(app.PlaybackTimer) && isvalid(app.PlaybackTimer)
+                if strcmpi(app.PlaybackTimer.Running, 'on')
+                    stop(app.PlaybackTimer);
+                end
+                delete(app.PlaybackTimer);
+            end
 
             if ~isempty(app.ParamChangedListener) && isvalid(app.ParamChangedListener)
                 delete(app.ParamChangedListener);

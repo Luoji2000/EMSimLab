@@ -99,7 +99,7 @@
             if nargin < 2 || ~isstruct(payload)
                 return;
             end
-            payload = comp.normalizePayload(payload);
+            payload = comp.normalizePayload(payload, comp.Value);
             comp.Value = payload;
             if comp.isUiReady()
                 comp.applyPayloadToUi(payload);
@@ -112,7 +112,7 @@
         function update(comp)
             %UPDATE  当公开属性变化时，同步到底层 UI
             % 触发时机：外部直接赋值 comp.Value 后由框架调用
-            payload = comp.normalizePayload(comp.Value);
+            payload = comp.normalizePayload(comp.Value, comp.Value);
             comp.Value = payload;
             if comp.isUiReady()
                 comp.applyPayloadToUi(payload);
@@ -438,20 +438,26 @@
             % 流程：
             %   1) 若当前处于 setPayload 写回期，直接返回（防重入）
             %   2) 从 UI 采集并归一化 payload
-            %   3) 同步边界输入启用状态并派发 PayloadChanged 事件
+            %   3) 回写规范化结果到 UI（如单位联动导致的 q/m 重置）
+            %   4) 派发 PayloadChanged 事件
             if comp.IsApplyingPayload
                 return;
             end
-            comp.Value = comp.collectPayloadFromUi();
-            comp.updateBoundsEnable(comp.Value.bounded);
+            previousPayload = comp.Value;
+            comp.Value = comp.collectPayloadFromUi(previousPayload);
+            comp.applyPayloadToUi(comp.Value);
             notify(comp, 'PayloadChanged');
         end
 
-        function payload = collectPayloadFromUi(comp)
+        function payload = collectPayloadFromUi(comp, previousPayload)
             %COLLECTPAYLOADFROMUI  采集控件值并组装为 payload
             % 说明：
             %   - 仅做“读取+映射”；合法性修正交给 normalizePayload
             %   - speedScale 当前无独立 UI 控件，先固定为 1.0
+            if nargin < 2 || ~isstruct(previousPayload)
+                previousPayload = comp.Value;
+            end
+
             payload = struct();
             payload.q = comp.QField.Value;
             payload.m = comp.MField.Value;
@@ -474,7 +480,7 @@
             payload.unitMode = comp.unitModeFromUiValue(comp.UnitModeDropDown.Value);
             payload.particleType = comp.particleTypeFromUiValue(comp.ParticleTypeDropDown.Value);
             payload.speedScale = 1.0;
-            payload = comp.normalizePayload(payload);
+            payload = comp.normalizePayload(payload, previousPayload);
         end
 
         function applyPayloadToUi(comp, payload)
@@ -482,7 +488,7 @@
             % 实现细节：
             %   - 先 normalize，确保写回值始终合法
             %   - 使用 IsApplyingPayload 防止写回触发回调形成循环
-            payload = comp.normalizePayload(payload);
+            payload = comp.normalizePayload(payload, comp.Value);
             comp.IsApplyingPayload = true;
             try
                 comp.QField.Value = payload.q;
@@ -506,6 +512,7 @@
                 comp.UnitModeDropDown.Value = comp.unitModeToUiValue(payload.unitMode);
                 comp.ParticleTypeDropDown.Value = comp.particleTypeToUiValue(payload.particleType);
 
+                comp.updateChargeMassLabels(payload.unitMode);
                 comp.updateBoundsEnable(payload.bounded);
             catch err
                 comp.IsApplyingPayload = false;
@@ -523,12 +530,17 @@
             comp.YmaxField.Enable = state;
         end
 
-        function payload = normalizePayload(comp, in)
+        function payload = normalizePayload(comp, in, previousPayload)
             %NORMALIZEPAYLOAD  参数合并与类型归一化（组件内防御层）
             % 规则：
             %   1) 先与 defaultPayload 合并，补齐缺失字段
             %   2) 按字段类型做转换与裁剪
-            %   3) 自动修正边界顺序并派生 vx0/vy0
+            %   3) 执行单位模式/粒子类型联动规则
+            %   4) 自动修正边界顺序并派生 vx0/vy0
+            if nargin < 3 || ~isstruct(previousPayload)
+                previousPayload = struct();
+            end
+
             base = comp.defaultPayload();
             payload = base;
 
@@ -542,8 +554,19 @@
                 end
             end
 
+            prevUnitMode = base.unitMode;
+            prevParticleType = base.particleType;
+            if isfield(previousPayload, 'unitMode')
+                prevUnitMode = comp.normalizeEnum(previousPayload.unitMode, ["SI","particle"], base.unitMode);
+            end
+            if isfield(previousPayload, 'particleType')
+                prevParticleType = comp.normalizeEnum(previousPayload.particleType, ["custom","electron","proton"], base.particleType);
+            end
+
+            payload.unitMode = comp.normalizeEnum(payload.unitMode, ["SI","particle"], base.unitMode);
+            payload.particleType = comp.normalizeEnum(payload.particleType, ["custom","electron","proton"], base.particleType);
             payload.q = comp.toDouble(payload.q, base.q);
-            payload.m = max(comp.toDouble(payload.m, base.m), 1e-9);
+            payload.m = comp.toDouble(payload.m, base.m);
             payload.B = max(comp.toDouble(payload.B, base.B), 0);
             payload.v0 = max(comp.toDouble(payload.v0, base.v0), 0);
             payload.thetaDeg = comp.toDouble(payload.thetaDeg, base.thetaDeg);
@@ -560,9 +583,13 @@
             payload.showF = comp.toLogical(payload.showF, base.showF);
             payload.showGrid = comp.toLogical(payload.showGrid, base.showGrid);
             payload.showBMarks = comp.toLogical(payload.showBMarks, base.showBMarks);
-            payload.unitMode = comp.normalizeEnum(payload.unitMode, ["SI","particle"], base.unitMode);
-            payload.particleType = comp.normalizeEnum(payload.particleType, ["custom","electron","proton"], base.particleType);
+            payload.autoFollow = comp.toLogical(payload.autoFollow, base.autoFollow);
+            payload.followSpan = max(0.5, min(40.0, comp.toDouble(payload.followSpan, base.followSpan)));
+            payload.maxSpan = max(2.0, min(200.0, comp.toDouble(payload.maxSpan, base.maxSpan)));
             payload.speedScale = max(0.25, min(4, comp.toDouble(payload.speedScale, base.speedScale)));
+
+            payload = comp.applyUnitParticleRules(payload, prevUnitMode, prevParticleType);
+            payload.m = max(payload.m, 1e-9);
 
             if payload.xMin > payload.xMax
                 t = payload.xMin;
@@ -578,6 +605,50 @@
             thetaRad = deg2rad(payload.thetaDeg);
             payload.vx0 = payload.v0 * cos(thetaRad);
             payload.vy0 = payload.v0 * sin(thetaRad);
+        end
+
+        function payload = applyUnitParticleRules(comp, payload, prevUnitMode, prevParticleType)
+            %APPLYUNITPARTICLERULES  单位模式/粒子类型联动
+            % 规则：
+            %   1) 选择电子/质子时，强制切换到粒子单位
+            %   2) 电子/质子模式下 q/m 固定为标准值
+            %   3) 自定义在“切入粒子模式”时重置为 (q,m)=(1,1)
+            if payload.particleType ~= "custom"
+                payload.unitMode = "particle";
+            end
+
+            unitModeChanged = payload.unitMode ~= prevUnitMode;
+            particleTypeChanged = payload.particleType ~= prevParticleType;
+
+            if payload.unitMode ~= "particle"
+                return;
+            end
+
+            switch payload.particleType
+                case "electron"
+                    [payload.q, payload.m] = comp.particlePreset("electron");
+                case "proton"
+                    [payload.q, payload.m] = comp.particlePreset("proton");
+                otherwise
+                    if unitModeChanged || (particleTypeChanged && prevParticleType ~= "custom")
+                        [payload.q, payload.m] = comp.particlePreset("custom");
+                    end
+            end
+        end
+
+        function [qVal, mVal] = particlePreset(~, particleType)
+            %PARTICLEPRESET  粒子单位下的 q/m 预设值（q: e，m: me）
+            switch lower(string(particleType))
+                case "electron"
+                    qVal = -1.0;
+                    mVal = 1.0;
+                case "proton"
+                    qVal = 1.0;
+                    mVal = 1836.15267343;
+                otherwise
+                    qVal = 1.0;
+                    mVal = 1.0;
+            end
         end
 
         function payload = defaultPayload(~)
@@ -601,6 +672,9 @@
                 'showF', false, ...
                 'showGrid', true, ...
                 'showBMarks', true, ...
+                'autoFollow', true, ...
+                'followSpan', 2.4, ...
+                'maxSpan', 40.0, ...
                 'unitMode', "SI", ...
                 'particleType', "custom", ...
                 'speedScale', 1.0, ...
@@ -666,6 +740,24 @@
                 v = 'on';
             else
                 v = 'off';
+            end
+        end
+
+        function updateChargeMassLabels(comp, unitMode)
+            %UPDATECHARGEMASSLABELS  根据单位模式更新 q/m 标签文字
+            if strcmpi(string(unitMode), "particle")
+                qText = 'q(e)';
+                mText = 'm(me)';
+            else
+                qText = 'q(C)';
+                mText = 'm(kg)';
+            end
+
+            if ~isempty(comp.QLabel) && isvalid(comp.QLabel)
+                comp.QLabel.Text = qText;
+            end
+            if ~isempty(comp.MLabel) && isvalid(comp.MLabel)
+                comp.MLabel.Text = mText;
             end
         end
 

@@ -43,6 +43,12 @@ for i = 1:numel(schema.defs)
     p.(fieldName) = v;
 end
 
+% 1.5) M1 粒子模板的单位/粒子联动规则
+%      - 选择电子/质子时：强制 unitMode=particle，并覆盖 q/m 为预设值
+if isfield(schema, "key") && strcmpi(string(schema.key), "particle")
+    p = applyParticleUnitRules(p);
+end
+
 % 2) particle 模板派生量：由 (v0, thetaDeg) 反推 (vx0, vy0)
 %    说明：这是几何派生，不改变速度大小，只分解方向分量。
 if hasField(p, "v0") && hasField(p, "thetaDeg")
@@ -64,6 +70,44 @@ if hasField(p, "yMin") && hasField(p, "yMax") && p.yMin > p.yMax
     p.yMax = tmp;
 end
 
+end
+
+function p = applyParticleUnitRules(p)
+%APPLYPARTICLEUNITRULES  粒子模板专用联动规则
+%
+% 说明
+%   - 该函数是“兜底防线”：保证核心参数语义稳定
+%   - 自定义粒子(custom)不强制重置 q/m，保留用户输入
+if ~(hasField(p, "particleType") && hasField(p, "unitMode"))
+    return;
+end
+
+particleType = lower(strtrim(string(p.particleType)));
+if any(particleType == ["electron","proton"])
+    p.unitMode = "particle";
+    [qVal, mVal] = particlePreset(particleType);
+    if hasField(p, "q")
+        p.q = qVal;
+    end
+    if hasField(p, "m")
+        p.m = mVal;
+    end
+end
+end
+
+function [qVal, mVal] = particlePreset(particleType)
+%PARTICLEPRESET  粒子单位下的 q/m 预设值（q: e，m: me）
+switch lower(strtrim(string(particleType)))
+    case "electron"
+        qVal = -1.0;
+        mVal = 1.0;
+    case "proton"
+        qVal = 1.0;
+        mVal = 1836.15267343;
+    otherwise
+        qVal = 1.0;
+        mVal = 1.0;
+end
 end
 
 function tf = hasField(s, name)

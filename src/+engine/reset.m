@@ -1,5 +1,5 @@
 function state = reset(state, params)
-%RESET  重置仿真状态（占位实现）
+%RESET  重置仿真状态（M1 无界版本）
 %
 % 输入
 %   state  (1,1) struct : 旧状态（可为空）
@@ -9,8 +9,8 @@ function state = reset(state, params)
 %   state (1,1) struct : 新状态（至少包含 t、x、y 等字段）
 %
 % 说明
-%   目前为占位：只把初始位置/速度写入 state。
-%   后续你可以按 engineKey 分发到不同引擎实现。
+%   当前阶段仅实现“无界匀强磁场”初始态，
+%   有界逻辑后续再在 engine.step 中扩展。
 
 arguments
     state (1,1) struct
@@ -18,13 +18,33 @@ arguments
 end
 
 state.t = 0.0;
-% 初始位置/速度（粒子示例）
-state.x = params.x0;
-state.y = params.y0;
-state.vx = params.vx0;
-state.vy = params.vy0;
+state.x = pickField(params, 'x0', 0.0);
+state.y = pickField(params, 'y0', 0.0);
+
+% 优先使用 validate 已派生的速度分量；若缺失则由 v0/thetaDeg 反推
+if isfield(params, 'vx0') && isfield(params, 'vy0')
+    state.vx = double(params.vx0);
+    state.vy = double(params.vy0);
+else
+    v0 = pickField(params, 'v0', 0.0);
+    thetaDeg = pickField(params, 'thetaDeg', 0.0);
+    thetaRad = deg2rad(double(thetaDeg));
+    state.vx = double(v0) * cos(thetaRad);
+    state.vy = double(v0) * sin(thetaRad);
+end
 
 % 轨迹缓存（可选）
 state.traj = [state.x, state.y];
+state.stepCount = 0;
+state.mode = "unbounded";
 
+end
+
+function v = pickField(s, name, fallback)
+%PICKFIELD  安全读取字段（缺失则返回 fallback）
+if isstruct(s) && isfield(s, name)
+    v = s.(name);
+else
+    v = fallback;
+end
 end
