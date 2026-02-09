@@ -1,11 +1,12 @@
 ﻿function renderScene(app, state)
-%RENDERSCENE  场景渲染（M1 无界版本）
+%RENDERSCENE  场景渲染（M1 有界/无界统一版本）
 %
 % 渲染内容
 %   1) 粒子轨迹
 %   2) 粒子当前位置
 %   3) 速度箭头（按速度+回旋半径对数放大）
-%   4) 磁场标记（覆盖大范围坐标区）
+%   4) 磁场标记（无界覆盖全视窗；有界仅覆盖磁场区域）
+%   5) 有界磁场粗黑边框
 
 if ~(isprop(app, 'SceneAxes') && isgraphics(app.SceneAxes))
     return;
@@ -159,7 +160,15 @@ end
 
 function cache = getRenderCache(ax)
 %GETRENDERCACHE  获取/初始化渲染句柄缓存
-cache = struct('hTrail', [], 'hParticle', [], 'hVel', [], 'hForce', [], 'hBMarks', [], 'hDebugText', []);
+cache = struct( ...
+    'hTrail', [], ...
+    'hParticle', [], ...
+    'hVel', [], ...
+    'hForce', [], ...
+    'hBMarks', [], ...
+    'hFieldBox', [], ...
+    'hDebugText', [] ...
+);
 
 ud = ax.UserData;
 if isstruct(ud) && isfield(ud, 'renderCache') && isstruct(ud.renderCache)
@@ -349,8 +358,27 @@ yLimNew = yLim + dy;
 end
 
 function [cache, info] = updateBMarks(ax, cache, p, xLim, yLim, viewSpan)
-%UPDATEBMARKS  更新磁场标记（覆盖当前可视范围）
-info = struct('visible', false, 'mark_count', 0, 'marker', "-", 'bdir', "-");
+%UPDATEBMARKS  更新磁场标记与有界磁场边框
+%
+% 渲染规则
+%   - bounded=false：磁场标记覆盖当前可视范围
+%   - bounded=true ：磁场标记仅在有界磁场区域内绘制，并显示黑色粗边框
+info = struct( ...
+    'visible', false, ...
+    'mark_count', 0, ...
+    'marker', "-", ...
+    'bdir', "-", ...
+    'bounded', false, ...
+    'box_visible', false ...
+);
+
+bounded = logicalField(p, 'bounded', false);
+info.bounded = bounded;
+
+% 边框显示独立于 showBMarks：有界模式下始终显示边界位置
+[cache, boxVisible] = updateFieldBox(ax, cache, p, bounded);
+info.box_visible = boxVisible;
+
 showB = logicalField(p, 'showBMarks', true);
 if ~showB
     hideHandle(cache.hBMarks);
@@ -368,7 +396,14 @@ else
     markFace = [0.75, 0.86, 1.00];
 end
 
-[xx, yy] = buildBMarkGrid(xLim, yLim, viewSpan);
+if bounded
+    % 有界模式固定按“整块磁场区域”铺设标记，不随当前视窗裁剪。
+    % 这样在拖拽坐标轴或粒子远离后，磁场标记仍保持完整一致。
+    box = readBoundaryBoxFromParams(p);
+    [xx, yy] = buildBMarkGridInBox(box);
+else
+    [xx, yy] = buildBMarkGrid(xLim, yLim, viewSpan);
+end
 
 if ~isLiveHandle(cache.hBMarks)
     cache.hBMarks = line('Parent', ax, ...
@@ -408,6 +443,66 @@ yv = linspace(yLim(1), yLim(2), n);
 [X, Y] = meshgrid(xv, yv);
 xx = X(:);
 yy = Y(:);
+end
+
+function [xx, yy] = buildBMarkGridInBox(box)
+%BUILDBMARKGRIDINBOX  在有界磁场区域内生成均匀标记点阵
+span = max(box.xMax - box.xMin, box.yMax - box.yMin);
+n = max(10, min(28, round(max(span, 1.0) * 2.0)));
+xv = linspace(box.xMin, box.xMax, n);
+yv = linspace(box.yMin, box.yMax, n);
+[X, Y] = meshgrid(xv, yv);
+xx = X(:);
+yy = Y(:);
+end
+
+function [cache, visible] = updateFieldBox(ax, cache, p, bounded)
+%UPDATEFIELDBOX  更新有界磁场黑色边框
+visible = false;
+if ~bounded
+    hideHandle(cache.hFieldBox);
+    return;
+end
+
+box = readBoundaryBoxFromParams(p);
+xData = [box.xMin, box.xMax, box.xMax, box.xMin, box.xMin];
+yData = [box.yMin, box.yMin, box.yMax, box.yMax, box.yMin];
+
+if ~isLiveHandle(cache.hFieldBox)
+    cache.hFieldBox = line('Parent', ax, ...
+        'XData', xData, ...
+        'YData', yData, ...
+        'LineStyle', '-', ...
+        'Color', [0.00, 0.00, 0.00], ...
+        'LineWidth', 2.8);
+else
+    set(cache.hFieldBox, ...
+        'XData', xData, ...
+        'YData', yData, ...
+        'Visible', 'on');
+end
+
+visible = true;
+end
+
+function box = readBoundaryBoxFromParams(p)
+%READBOUNDARYBOXFROMPARAMS  从参数读取并规范化矩形边界
+box = struct();
+box.xMin = double(pickField(p, 'xMin', -1.0));
+box.xMax = double(pickField(p, 'xMax', 1.0));
+box.yMin = double(pickField(p, 'yMin', -1.0));
+box.yMax = double(pickField(p, 'yMax', 1.0));
+
+if box.xMin > box.xMax
+    t = box.xMin;
+    box.xMin = box.xMax;
+    box.xMax = t;
+end
+if box.yMin > box.yMax
+    t = box.yMin;
+    box.yMin = box.yMax;
+    box.yMax = t;
+end
 end
 
 function [cache, info] = updateVelocityArrow(ax, cache, state, p, viewSpan)
@@ -616,6 +711,7 @@ trailVisible = handleVisible(cache.hTrail);
 particleVisible = handleVisible(cache.hParticle);
 velVisible = handleVisible(cache.hVel);
 bMarkVisible = handleVisible(cache.hBMarks);
+fieldBoxVisible = handleVisible(cache.hFieldBox);
 childCount = numel(ax.Children);
 
 logger.logEvent(app, '调试', '渲染-终态', struct( ...
@@ -629,6 +725,7 @@ logger.logEvent(app, '调试', '渲染-终态', struct( ...
     'particle_visible', particleVisible, ...
     'vel_visible', velVisible, ...
     'bmark_visible', bMarkVisible, ...
+    'field_box_visible', fieldBoxVisible, ...
     'x', double(state.x), ...
     'y', double(state.y) ...
 ));

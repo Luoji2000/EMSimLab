@@ -217,6 +217,12 @@ switch token
         label = "速度箭头可见";
     case "bmark_visible"
         label = "磁场标记可见";
+    case "field_box_visible"
+        label = "磁场边框可见";
+    case "bounded"
+        label = "有界模式";
+    case "box_visible"
+        label = "边框可见";
     case "auto_follow"
         label = "自动跟随";
     case "follow_span"
