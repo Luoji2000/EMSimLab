@@ -35,6 +35,10 @@ end
 schema = params.schema_get(tpl.schemaKey);
 p0 = params.defaults(schema);
 p = params.validate(p0, schema);
+p.modelType = string(tpl.engineKey);
+p.templateId = string(tpl.id);
+p = templates.applyTemplatePreset(tpl.id, p);
+p = params.validate(p, schema);
 
 if isprop(app, 'Params')
     app.Params = p;

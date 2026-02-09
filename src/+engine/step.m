@@ -1,22 +1,17 @@
 ﻿function state = step(state, params, dt)
-%STEP  推进一步（支持 M1 有界/无界匀强磁场）
+%STEP  推进一步（按 modelType 分发）
 %
 % 输入
-%   state (1,1) struct : 当前状态（至少包含 x/y/vx/vy）
-%   params (1,1) struct : 参数结构（含 bounded 与边界范围）
+%   state (1,1) struct : 当前状态
+%   params (1,1) struct : 参数结构
 %   dt    (1,1) double : 基础步长（秒）
 %
 % 输出
 %   state (1,1) struct : 推进后的新状态
 %
-% 实现要点
-%   1) 无界模式：全程使用旋转矩阵解析推进（与旧版本一致）
-%   2) 有界模式：矩形区域内走磁场推进，区域外走匀速直线
-%   3) 若单步内发生进/出边界：使用二分法定位穿越时刻，再分段推进
-%
-% 物理约束
-%   - 磁场外: r_{n+1} = r_n + v_n * dt, a = 0
-%   - 磁场内: 使用解析旋转矩阵，避免欧拉积分漂移
+% 说明
+%   - particle: 旋转矩阵解析推进（含有界跨界二分）
+%   - rail    : 导轨模型推进（R 统一模板：开路匀速 + 闭路阻尼）
 
 arguments
     state (1,1) struct
@@ -24,13 +19,23 @@ arguments
     dt (1,1) double {mustBePositive}
 end
 
-% 顶部速度倍率统一缩放仿真步长
 if isfield(params, 'speedScale')
     dt = dt * max(0.01, double(params.speedScale));
 end
 
-% 缺字段兜底：允许外部直接调用 step
-state = ensureBaseState(state, params);
+modelType = resolveModelType(params);
+switch modelType
+    case "rail"
+        state = stepRailState(state, params, dt);
+    otherwise
+        state = stepParticleState(state, params, dt);
+end
+
+end
+
+function state = stepParticleState(state, params, dt)
+%STEPPARTICLESTATE  M 系列粒子推进
+state = ensureParticleState(state, params);
 
 omega = cyclotronOmega(params);
 rOld = [double(state.x); double(state.y)];
@@ -38,13 +43,11 @@ vOld = [double(state.vx); double(state.vy)];
 
 bounded = logicalField(params, 'bounded', false);
 if ~bounded
-    % 无界：全程都在磁场内
     [rNew, vNew] = propagateSegment(rOld, vOld, omega, true, dt);
     inField = true;
     modeText = "unbounded";
 else
-    % 有界：可能出现“外 -> 内 -> 外”链条
-    box = readBoundaryBox(params);
+    box = geom.readBoundsFromParams(params);
     [rNew, vNew, inField] = propagateBoundedChain(rOld, vOld, omega, dt, box);
     if inField
         modeText = "bounded_inside";
@@ -54,6 +57,7 @@ else
 end
 
 state.t = state.t + dt;
+state.modelType = "particle";
 state.x = rNew(1);
 state.y = rNew(2);
 state.vx = vNew(1);
@@ -64,8 +68,8 @@ state.inField = inField;
 state.mode = modeText;
 end
 
-function state = ensureBaseState(state, params)
-%ENSUREBASESTATE  统一补齐状态字段
+function state = ensureParticleState(state, params)
+%ENSUREPARTICLESTATE  补齐粒子状态字段
 if ~isfield(state, 'x') || ~isfield(state, 'y') || ~isfield(state, 'vx') || ~isfield(state, 'vy')
     state = engine.reset(state, params);
 end
@@ -80,28 +84,178 @@ if ~isfield(state, 'stepCount')
 end
 end
 
+function state = stepRailState(state, params, dt)
+%STEPRAILSTATE  R 系列导轨推进
+state = ensureRailState(state, params);
+qHeatPrev = double(pickField(state, 'qHeat', 0.0));
+
+x0 = double(state.x);
+y0 = double(state.y);
+v0 = double(state.vx);
+
+m = max(double(pickField(params, 'm', 1.0)), 1e-9);
+Fdrive = 0.0;
+if logicalField(params, 'driveEnabled', false)
+    Fdrive = double(pickField(params, 'Fdrive', 0.0));
+end
+
+inFieldStart = isRailInField([x0; y0], params);
+loopClosed = logicalField(params, 'loopClosed', false);
+
+if inFieldStart && loopClosed
+    % 闭环导轨模型：dv/dt = (Fdrive/m) - (k/m) v
+    k = railDampingK(params);
+    alpha = k / m;
+    b = Fdrive / m;
+    if abs(alpha) > 1e-12
+        vInf = b / alpha;
+        expTerm = exp(-alpha * dt);
+        v1 = vInf + (v0 - vInf) * expTerm;
+        x1 = x0 + vInf * dt + ((v0 - vInf) / alpha) * (1 - expTerm);
+    else
+        a = b;
+        v1 = v0 + a * dt;
+        x1 = x0 + v0 * dt + 0.5 * a * dt^2;
+    end
+else
+    % 开路主链：导体棒等效匀速（可选叠加外力）
+    a = Fdrive / m;
+    v1 = v0 + a * dt;
+    x1 = x0 + v0 * dt + 0.5 * a * dt^2;
+end
+
+y1 = y0;
+inFieldEnd = isRailInField([x1; y1], params);
+
+state.t = state.t + dt;
+state.modelType = "rail";
+state.x = x1;
+state.y = y1;
+state.vx = v1;
+state.vy = 0.0;
+state.traj(end+1, :) = [state.x, state.y];
+state.stepCount = state.stepCount + 1;
+state.inField = inFieldEnd;
+
+if logicalField(params, 'bounded', false)
+    if inFieldEnd
+        state.mode = "rail_bounded_inside";
+    else
+        state.mode = "rail_bounded_outside";
+    end
+else
+    state.mode = "rail_unbounded";
+end
+
+state = attachRailOutputs(state, params, inFieldEnd);
+state.qHeat = qHeatPrev + max(0.0, double(state.pElec)) * double(dt);
+if isfield(state, 'rail') && isstruct(state.rail)
+    state.rail.qHeat = double(state.qHeat);
+end
+end
+
+function state = ensureRailState(state, params)
+%ENSURERAILSTATE  补齐导轨状态字段
+if ~isfield(state, 'x') || ~isfield(state, 'y') || ~isfield(state, 'vx')
+    state = engine.reset(state, params);
+end
+if ~isfield(state, 't')
+    state.t = 0.0;
+end
+if ~isfield(state, 'traj') || ~isnumeric(state.traj) || size(state.traj, 2) ~= 2
+    state.traj = [state.x, state.y];
+end
+if ~isfield(state, 'stepCount')
+    state.stepCount = 0;
+end
+if ~isfield(state, 'qHeat')
+    state.qHeat = 0.0;
+end
+end
+
+function state = attachRailOutputs(state, params, inField)
+%ATTACHRAILOUTPUTS  计算导轨输出量
+vx = double(pickField(state, 'vx', 0.0));
+L = max(double(pickField(params, 'L', 1.0)), 1e-9);
+R = max(double(pickField(params, 'R', 1.0)), 1e-12);
+loopClosed = logicalField(params, 'loopClosed', false);
+
+if inField
+    epsilon = signedB(params) * L * vx;
+else
+    epsilon = 0.0;
+end
+
+if loopClosed
+    current = epsilon / R;
+    % 安培力方向必须阻碍导体棒当前速度（楞次定律）
+    fMag = -signedB(params) * current * L;
+    pElec = current^2 * R;
+else
+    current = 0.0;
+    fMag = 0.0;
+    pElec = 0.0;
+end
+
+state.epsilon = epsilon;
+state.current = current;
+state.fMag = fMag;
+state.pElec = pElec;
+state.pMech = double(pickField(params, 'Fdrive', 0.0)) * vx;
+state.rail = struct( ...
+    'L', L, ...
+    'x', double(state.x), ...
+    'yCenter', double(state.y), ...
+    'inField', logical(inField), ...
+    'epsilon', epsilon, ...
+    'current', current, ...
+    'fMag', fMag, ...
+    'pElec', pElec ...
+);
+end
+
+function inField = isRailInField(r, params)
+%ISRAILINFIELD  计算导体棒中心是否位于磁场有效区域
+if ~logicalField(params, 'bounded', false)
+    inField = true;
+    return;
+end
+box = geom.readBoundsFromParams(params);
+inField = geom.isInsideBounds(r, box);
+end
+
+function k = railDampingK(params)
+%RAILDAMPINGK  回路阻尼系数 k = B^2 L^2 / R
+B = abs(double(pickField(params, 'B', 0.0)));
+L = abs(double(pickField(params, 'L', 1.0)));
+R = max(double(pickField(params, 'R', 1.0)), 1e-12);
+k = (B * L)^2 / R;
+end
+
+function modelType = resolveModelType(params)
+%RESOLVEMODELTYPE  解析当前参数对应模型类型
+modelType = lower(strtrim(string(pickField(params, 'modelType', "particle"))));
+if startsWith(modelType, "rail")
+    modelType = "rail";
+else
+    modelType = "particle";
+end
+end
+
 function [rNew, vNew, inField] = propagateBoundedChain(r0, v0, omega, dt, box)
 %PROPAGATEBOUNDEDCHAIN  有界单步分段推进
-%
-% 规则
-%   - 在当前区域假设下试走完整 dt
-%   - 若区域属性未变化，直接接受
-%   - 若发生跨界，用二分法定位穿越时刻 tau 并拆分子段
-
 remaining = double(dt);
 rNow = r0;
 vNow = v0;
-inNow = isInsideRect(rNow, box);
+inNow = geom.isInsideBounds(rNow, box);
 
-% 一步里最多处理若干次跨界，防止极端参数导致死循环
 maxCrossEvents = 8;
 crossCount = 0;
 
 while remaining > 1e-12 && crossCount < maxCrossEvents
     [rTry, vTry] = propagateSegment(rNow, vNow, omega, inNow, remaining);
-    inTry = isInsideRect(rTry, box);
+    inTry = geom.isInsideBounds(rTry, box);
 
-    % 当前剩余时间内没有跨界，直接收敛
     if inTry == inNow
         rNow = rTry;
         vNow = vTry;
@@ -109,11 +263,8 @@ while remaining > 1e-12 && crossCount < maxCrossEvents
         break;
     end
 
-    % 发生跨界：用二分法找首次穿越时刻
     tau = findCrossingTimeByBisection(rNow, vNow, omega, remaining, inNow, box);
     tau = max(0.0, min(tau, remaining));
-
-    % 数值保护：避免 tau=0 导致循环不前进
     if tau <= 1e-12
         tau = min(remaining, max(1e-9, 1e-6 * remaining));
     end
@@ -121,8 +272,7 @@ while remaining > 1e-12 && crossCount < maxCrossEvents
     [rNow, vNow] = propagateSegment(rNow, vNow, omega, inNow, tau);
     remaining = remaining - tau;
 
-    % 穿越后按几何位置刷新区域属性
-    inAfter = isInsideRect(rNow, box);
+    inAfter = geom.isInsideBounds(rNow, box);
     if inAfter == inNow
         inNow = ~inNow;
     else
@@ -132,10 +282,9 @@ while remaining > 1e-12 && crossCount < maxCrossEvents
     crossCount = crossCount + 1;
 end
 
-% 兜底：若迭代次数用尽仍有剩余时间，按当前区域推进完
 if remaining > 1e-12
     [rNow, vNow] = propagateSegment(rNow, vNow, omega, inNow, remaining);
-    inNow = isInsideRect(rNow, box);
+    inNow = geom.isInsideBounds(rNow, box);
 end
 
 rNew = rNow;
@@ -145,24 +294,13 @@ end
 
 function tau = findCrossingTimeByBisection(r0, v0, omega, totalDt, inStart, box)
 %FINDCROSSINGTIMEBYBISECTION  二分定位首次跨界时刻
-%
-% 输入
-%   r0, v0   : 子段起点状态
-%   omega    : 回旋角速度
-%   totalDt  : 子段总时长
-%   inStart  : 起点是否在磁场区域内
-%   box      : 边界盒
-%
-% 输出
-%   tau      : 首次跨界时刻（0 ~ totalDt）
-
 lo = 0.0;
 hi = double(totalDt);
 
 for k = 1:32
     mid = 0.5 * (lo + hi);
     [rMid, ~] = propagateSegment(r0, v0, omega, inStart, mid);
-    inMid = isInsideRect(rMid, box);
+    inMid = geom.isInsideBounds(rMid, box);
 
     if inMid == inStart
         lo = mid;
@@ -171,7 +309,6 @@ for k = 1:32
     end
 end
 
-% hi 更接近“刚跨界后的时刻”
 tau = hi;
 end
 
@@ -192,18 +329,6 @@ end
 
 function [rNew, vNew] = propagateInField(rOld, vOld, omega, dt)
 %PROPAGATEINFIELD  磁场内推进：旋转矩阵解析法
-%
-% 公式
-%   theta = omega * dt
-%   v_{n+1} = R(theta) * v_n
-%   r_{n+1} = r_n + (1/omega) * A(theta) * v_n
-%
-% 其中
-%   R = [cos(theta),  sin(theta);
-%       -sin(theta),  cos(theta)]
-%   A = [sin(theta), 1-cos(theta);
-%       -(1-cos(theta)), sin(theta)]
-
 if abs(omega) < 1e-12
     [rNew, vNew] = propagateFree(rOld, vOld, dt);
     return;
@@ -220,54 +345,23 @@ vNew = R * vOld;
 rNew = rOld + (A * vOld) / double(omega);
 end
 
-function box = readBoundaryBox(params)
-%READBOUNDARYBOX  读取并规范化矩形边界
-xMin = double(pickField(params, 'xMin', -1.0));
-xMax = double(pickField(params, 'xMax', 1.0));
-yMin = double(pickField(params, 'yMin', -1.0));
-yMax = double(pickField(params, 'yMax', 1.0));
-
-if xMin > xMax
-    t = xMin;
-    xMin = xMax;
-    xMax = t;
-end
-if yMin > yMax
-    t = yMin;
-    yMin = yMax;
-    yMax = t;
-end
-
-box = struct('xMin', xMin, 'xMax', xMax, 'yMin', yMin, 'yMax', yMax);
-end
-
-function tf = isInsideRect(r, box)
-%ISINSIDERECT  判断点是否位于边界盒内部（含边界）
-%
-% 数值说明
-%   - 加入微小容差 tol，减少浮点误差引起的边界抖动
-x = double(r(1));
-y = double(r(2));
-tol = 1e-12;
-
-tf = (x >= box.xMin - tol) && (x <= box.xMax + tol) && ...
-     (y >= box.yMin - tol) && (y <= box.yMax + tol);
-end
-
 function omega = cyclotronOmega(params)
 %CYCLOTRONOMEGA  计算回旋角速度 omega = q*Bz/m
 q = pickField(params, 'q', 0.0);
 m = max(pickField(params, 'm', 1.0), 1e-12);
-B = pickField(params, 'B', 0.0);
-Bdir = lower(strtrim(string(pickField(params, 'Bdir', "out"))));
-
-if Bdir == "in"
-    Bz = -double(B);
-else
-    Bz = double(B);
+Bz = signedB(params);
+omega = double(q) * Bz / double(m);
 end
 
-omega = double(q) * Bz / double(m);
+function Bz = signedB(params)
+%SIGNEDB  按方向得到带符号 Bz（出屏为正，入屏为负）
+B = double(pickField(params, 'B', 0.0));
+Bdir = lower(strtrim(string(pickField(params, 'Bdir', "out"))));
+if Bdir == "in"
+    Bz = -B;
+else
+    Bz = B;
+end
 end
 
 function v = logicalField(s, name, fallback)

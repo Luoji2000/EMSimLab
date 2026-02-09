@@ -44,7 +44,7 @@ boot.openReleaseApp()
 3. 已补齐 `docs`，包含与 ElectroSim 同规格的中文技术文档。
 4. 已新增 `.gitattributes`，将 `.mlapp` 视为二进制。
 
-## 当前进度（M1）
+## 当前进度（M1 + R）
 
 1. 参数链路已打通：模板切换、参数回写、统一校验、状态重置与渲染刷新可闭环工作。
 2. 运动模型已接通：
@@ -62,3 +62,27 @@ boot.openReleaseApp()
    - `tests/smoke_m1_unbounded_rotation.m`
    - `tests/smoke_m1_unit_rules.m`
    - `tests/smoke_m1_bounded_chain.m`
+6. R 系列最小闭环已接入（统一模板 + 场景参数）：
+   - 模板注册采用统一 `R`，并兼容 `R1/R2/R3/R4 -> R` 的查询映射；
+   - 参数组件按模板动态切换（`M* -> M1_for_test`, `R* -> R2_for_test`）；
+   - 引擎 `rail` 分支支持开路输出 `ε=BLv`、闭路电流与安培力、以及有界磁场判定；
+   - 场景已接入导轨/滑杆/电阻（矩形符号）与电流/外力/安培力箭头；
+   - 速度箭头在导轨模型中上移到上导轨外侧，避免与受力箭头重叠。
+7. R2 曲线渲染已接入：
+   - 曲线页改为三子图：`v(t)`、`I(t)`、`F_mag(t)`；
+   - R1（无外力）阶段显示占位说明，R2（有外力）阶段绘制实时曲线；
+   - 时间回退（重置/切模）会自动清空历史，避免旧曲线残留。
+
+## UI 协作流程（约定）
+
+1. `mlapp/*.mlapp` 作为可视化编辑源（App Designer 中维护）。
+2. 每次 UI 结构更新后，把导出的 `.m` 放入 `m/Version/` 作为版本快照。
+3. 当前接入文件保持在 `m/*_for_test.m`，由此与 `src/` 逻辑层联通。
+4. 逻辑修改优先发生在 `src/`；UI 可替换时，保持对外接口稳定（`payload` 与事件）。
+
+## 通用函数复用（当前）
+
+1. 边界读取与判定已抽离到 `src/+geom/`：
+   - `geom.readBoundsFromParams`
+   - `geom.isInsideBounds`
+2. `engine.reset`、`engine.step` 与 `viz.renderScene` 已复用该公共实现，后续 R 系列可直接沿用。

@@ -29,6 +29,14 @@ elseif isprop(app, 'SpeedValueField') && isgraphics(app.SpeedValueField)
     p.speedScale = double(app.SpeedValueField.Value);
 end
 
+% 统一写入当前引擎标签，避免不同模板间参数串线
+if isprop(app, 'CurrentEngineKey')
+    p.modelType = string(app.CurrentEngineKey);
+end
+if isprop(app, 'CurrentTemplateId')
+    p.templateId = string(app.CurrentTemplateId);
+end
+
 % 3) 统一参数校验
 p = params.validate(p, schema);
 
@@ -38,6 +46,8 @@ ui.applyPayload(app, p);
 
 % 5) 当前骨架采用“改参即重置”策略，保证行为确定性，便于调试
 app.State = engine.reset(app.State, app.Params);
+app.Params = control.mergeRailOutputs(app.Params, app.State);
+ui.applyPayload(app, app.Params);
 ui.render(app, app.State);
 
 % 5.1) 磁场标记开关日志（按你的调试诉求单独记录）

@@ -34,6 +34,8 @@ stepDt = 0.05;
 
 % 1) 推进一步
 app.State = engine.step(app.State, app.Params, stepDt);
+app.Params = control.mergeRailOutputs(app.Params, app.State);
+ui.applyPayload(app, app.Params);
 
 % 2) 刷新渲染
 ui.render(app, app.State);

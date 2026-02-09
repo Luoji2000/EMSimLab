@@ -28,6 +28,8 @@ try
 
     % 1) 推进一步
     app.State = engine.step(app.State, app.Params, stepDt);
+    app.Params = control.mergeRailOutputs(app.Params, app.State);
+    ui.applyPayload(app, app.Params);
 
     % 2) 刷新渲染
     ui.render(app, app.State);
@@ -38,7 +40,8 @@ try
         if isfield(app.State, 't')
             tNow = app.State.t;
         end
-        logger.logEvent(app, '调试', '连续播放推进', struct('dt', stepDt, 't', tNow));
+        payload = buildTickLogPayload(app, stepDt, tNow);
+        logger.logEvent(app, '调试', '连续播放推进', payload);
     end
 catch err
     logger.logEvent(app, '错误', '连续播放失败', struct('reason', err.message));
@@ -46,6 +49,31 @@ catch err
         app.pausePlayback();
     end
 end
+end
+
+function payload = buildTickLogPayload(app, stepDt, tNow)
+%BUILDTICKLOGPAYLOAD  生成单帧推进日志负载
+payload = struct('dt', stepDt, 't', tNow);
+
+if ~(isprop(app, 'State') && isstruct(app.State))
+    return;
+end
+
+state = app.State;
+modelType = string(pickField(state, 'modelType', ""));
+if ~startsWith(lower(strtrim(modelType)), "rail")
+    return;
+end
+
+payload.template_id = string(pickField(app, 'CurrentTemplateId', ""));
+payload.mode = string(pickField(state, 'mode', ""));
+payload.x = double(pickField(state, 'x', 0.0));
+payload.vx = double(pickField(state, 'vx', 0.0));
+payload.epsilon = double(pickField(state, 'epsilon', 0.0));
+payload.current = double(pickField(state, 'current', 0.0));
+payload.fmag = double(pickField(state, 'fMag', 0.0));
+payload.q_heat = double(pickField(state, 'qHeat', 0.0));
+payload.in_field = logicalField(state, 'inField', true);
 end
 
 function tf = isLiveApp(app)
@@ -94,5 +122,28 @@ if isstruct(state) && isfield(state, 'stepCount')
     tf = mod(double(state.stepCount), 10) == 0;
 else
     tf = true;
+end
+end
+
+function v = pickField(s, name, fallback)
+%PICKFIELD  安全读取字段（缺失则返回 fallback）
+if isstruct(s) && isfield(s, name)
+    v = s.(name);
+elseif isobject(s) && isprop(s, name)
+    v = s.(name);
+else
+    v = fallback;
+end
+end
+
+function v = logicalField(s, name, fallback)
+%LOGICALFIELD  安全读取 logical 字段
+raw = pickField(s, name, fallback);
+if islogical(raw) && isscalar(raw)
+    v = raw;
+elseif isnumeric(raw) && isscalar(raw)
+    v = raw ~= 0;
+else
+    v = logical(fallback);
 end
 end

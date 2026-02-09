@@ -22,6 +22,8 @@ end
 
 % 1) 根据当前参数重建状态
 app.State = engine.reset(app.State, app.Params);
+app.Params = control.mergeRailOutputs(app.Params, app.State);
+ui.applyPayload(app, app.Params);
 
 % 2) 刷新界面
 ui.render(app, app.State);

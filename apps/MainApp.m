@@ -342,8 +342,51 @@
             logger.logEvent(app, '信息', '模板树构建完成', struct('group_count', numel(groups), 'template_count', tplCount));
         end
 
-        function ensureParamComponent(app)
-            %ENSUREPARAMCOMPONENT  确保 M1 参数组件已挂载
+        function ensureParamComponent(app, templateId, forceRecreate)
+            %ENSUREPARAMCOMPONENT  按模板确保参数组件已挂载
+            %
+            % 输入
+            %   templateId : 模板 ID（可选，缺省使用 app.CurrentTemplateId）
+            %
+            % 规则
+            %   1) 不同模板族使用不同参数组件类
+            %   2) 若当前组件类不匹配，则销毁旧组件并重建
+            %   3) 组件创建后统一绑定 PayloadChanged 监听
+
+            if nargin < 2 || strlength(strtrim(string(templateId))) == 0
+                templateId = app.CurrentTemplateId;
+            end
+            if nargin < 3
+                forceRecreate = false;
+            end
+            className = app.resolveParamComponentClass(templateId);
+            oldClass = "无";
+            hasOldComponent = false;
+            if ~isempty(app.ParamComponent) && isa(app.ParamComponent, 'handle')
+                try
+                    hasOldComponent = isvalid(app.ParamComponent);
+                    if hasOldComponent
+                        oldClass = string(class(app.ParamComponent));
+                    end
+                catch
+                    hasOldComponent = false;
+                end
+            end
+
+            logger.logEvent(app, '调试', '参数组件装载决策', struct( ...
+                'template_id', string(templateId), ...
+                'current_template', string(app.CurrentTemplateId), ...
+                'engine_key', string(app.CurrentEngineKey), ...
+                'force_recreate', logical(forceRecreate), ...
+                'resolved_class', className, ...
+                'old_class', oldClass, ...
+                'has_old_component', hasOldComponent, ...
+                'm1_class_exists', exist('M1_for_test', 'class') == 8, ...
+                'r2_class_exists', exist('R2_for_test', 'class') == 8, ...
+                'm1_path', string(which('M1_for_test')), ...
+                'r2_path', string(which('R2_for_test')) ...
+            ));
+
             if isempty(app.ParamHostGrid) || ~isgraphics(app.ParamHostGrid)
                 app.ParamHostGrid = uigridlayout(app.ParamTab);
                 app.ParamHostGrid.ColumnWidth = {'1x'};
@@ -351,21 +394,36 @@
                 app.ParamHostGrid.Padding = [6 6 6 6];
             end
 
+            needCreate = true;
             if ~isempty(app.ParamComponent) && isa(app.ParamComponent, 'handle') && isvalid(app.ParamComponent)
-                logger.logEvent(app, '调试', '参数组件复用', struct('class_name', class(app.ParamComponent)));
-                return;
+                oldClass = string(class(app.ParamComponent));
+                if ~forceRecreate && strcmpi(oldClass, className)
+                    needCreate = false;
+                    logger.logEvent(app, '调试', '参数组件复用', struct('class_name', char(oldClass)));
+                else
+                    logger.logEvent(app, '信息', '参数组件切换', struct('from_class', char(oldClass), 'to_class', char(className)));
+                    delete(app.ParamComponent);
+                    app.ParamComponent = [];
+                end
             end
 
-            if exist('M1_for_test', 'class') == 8
-                app.ParamComponent = M1_for_test(app.ParamHostGrid);
-                app.ParamComponent.Layout.Row = 1;
-                app.ParamComponent.Layout.Column = 1;
-                propCount = numel(properties(app.ParamComponent));
-                logger.logEvent(app, '信息', '参数组件加载成功', struct('class_name', 'M1_for_test', 'property_count', propCount));
-            else
-                app.ParamComponent = [];
-                logger.logEvent(app, '警告', '参数组件缺失', struct('class_name', 'M1_for_test'));
+            if needCreate
+                if exist(char(className), 'class') == 8
+                    app.ParamComponent = feval(char(className), app.ParamHostGrid);
+                    app.ParamComponent.Layout.Row = 1;
+                    app.ParamComponent.Layout.Column = 1;
+                    propCount = numel(properties(app.ParamComponent));
+                    logger.logEvent(app, '信息', '参数组件加载成功', struct('class_name', char(className), 'property_count', propCount));
+                else
+                    app.ParamComponent = [];
+                    logger.logEvent(app, '警告', '参数组件缺失', struct('class_name', char(className)));
+                end
             end
+
+            logger.logEvent(app, '调试', '参数组件装载结果', struct( ...
+                'resolved_class', className, ...
+                'actual_class', app.readParamComponentClassName() ...
+            ));
 
             if ~isempty(app.ParamChangedListener) && isvalid(app.ParamChangedListener)
                 delete(app.ParamChangedListener);
@@ -381,6 +439,37 @@
                 catch
                     app.ParamChangedListener = event.listener.empty;
                     logger.logEvent(app, '错误', '参数组件监听绑定失败', struct('event', 'PayloadChanged'));
+                end
+            end
+        end
+
+        function className = resolveParamComponentClass(app, templateId)
+            %RESOLVEPARAMCOMPONENTCLASS  按模板 ID 解析参数组件类名
+            token = upper(strtrim(string(templateId)));
+            engineToken = "";
+            if isprop(app, 'CurrentEngineKey')
+                engineToken = lower(strtrim(string(app.CurrentEngineKey)));
+            end
+
+            if startsWith(token, "R") || engineToken == "rail"
+                className = "R2_for_test";
+                return;
+            end
+
+            % 其余模板先统一回退到 M1 参数组件
+            className = "M1_for_test";
+        end
+
+        function className = readParamComponentClassName(app)
+            %READPARAMCOMPONENTCLASSNAME  读取当前参数组件类名（用于日志）
+            className = "无";
+            if ~isempty(app.ParamComponent) && isa(app.ParamComponent, 'handle')
+                try
+                    if isvalid(app.ParamComponent)
+                        className = string(class(app.ParamComponent));
+                    end
+                catch
+                    className = "未知";
                 end
             end
         end
@@ -481,13 +570,18 @@
             %ENSUREDEVPATHS  确保 apps/src/m 目录已加入 MATLAB 路径
             appPath = mfilename('fullpath');
             root = fileparts(fileparts(appPath));
+            appsDir = fullfile(root, 'apps');
             srcDir = fullfile(root, 'src');
             mDir = fullfile(root, 'm');
 
-            if isfolder(srcDir) && isempty(which('boot.startup'))
+            % 强制将当前工程路径置顶，避免被旧项目同名函数抢占
+            if isfolder(appsDir)
+                addpath(appsDir, '-begin');
+            end
+            if isfolder(srcDir)
                 addpath(srcDir, '-begin');
             end
-            if isfolder(mDir) && isempty(which('M1_for_test'))
+            if isfolder(mDir)
                 addpath(mDir, '-begin');
             end
         end
@@ -581,6 +675,21 @@
 
     % App 创建与销毁
     methods (Access = public)
+
+        function reloadParamComponent(app, templateId, forceRecreate)
+            %RELOADPARAMCOMPONENT  控制层可调用的参数组件重载入口
+            %
+            % 说明
+            %   - control.* 位于类外部，无法直接调用 private 方法
+            %   - 这里提供公开包装，内部转发到 ensureParamComponent
+            if nargin < 2
+                templateId = app.CurrentTemplateId;
+            end
+            if nargin < 3
+                forceRecreate = true;
+            end
+            app.ensureParamComponent(templateId, forceRecreate);
+        end
 
         function appendLogLine(app, line)
             %APPENDLOGLINE  对外公开的日志追加入口（供 logger.logEvent 调用）

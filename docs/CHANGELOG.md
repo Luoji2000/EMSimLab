@@ -1,5 +1,21 @@
 ﻿# 更新日志
 
+## 2026-02-09
+- 重构：R 系列模板统一为 `src/+templates/+defs/R.m`，`templates.getById` 新增 `R1/R2/R3/R4 -> R` 别名映射。
+- 优化：导轨场景速度箭头上移到上导轨外侧，避免与外力/安培力箭头重叠。
+- 优化：导轨场景电阻符号改为“矩形+引线”表示，便于教学演示识别。
+- 修复：闭路导轨安培力方向按楞次定律处理，保证始终阻碍导体棒当前运动。
+- 新增：`viz.renderPlots` 接入 R2 三子图曲线（`v(t)`、`I(t)`、`F_mag(t)`），R1 显示占位提示。
+- 重构：新增 `src/+geom/readBoundsFromParams.m` 与 `src/+geom/isInsideBounds.m`，统一边界读取与点内判定逻辑。
+- 重构：`src/+engine/reset.m`、`src/+engine/step.m`、`src/+viz/renderScene.m` 改为复用 `geom` 公共函数，减少重复实现。
+- 文档：`README.md` 与 `docs/中文技术文档.md` 新增 UI 协作链条约定（`mlapp -> m/Version -> *_for_test.m`）。
+- 新增：`src/+templates/+defs/R1.m` 与 `schema_get(\"rail\")`，接入 R1 导轨模板。
+- 重构：`apps/MainApp.m` 参数组件加载改为按模板动态切换（`M*`/`R*`）。
+- 重构：`m/R2_for_test.m` 改为统一 payload 组件接口（`Value/getPayload/setPayload/PayloadChanged`）。
+- 新增：引擎 `rail` 分支与导轨场景渲染分支，支持 R1 的 `ε=BLv` 输出与有界磁场判定。
+- 新增：`src/+control/mergeRailOutputs.m`，把状态输出同步到参数面板输出区。
+- 测试：新增 `tests/smoke_r1_minimal_loop.m`。
+
 ## 2026-02-08
 - 闭环：`apps/MainApp.m` 接通 M1 最小运行链路（模板树构建、参数组件挂载、回调绑定、`boot.startup` 启动初始化）。
 - 闭环：参数变化事件已联通 `control.onParamsChanged`，实现 `buildPayload -> validate -> applyPayload -> reset -> render`。

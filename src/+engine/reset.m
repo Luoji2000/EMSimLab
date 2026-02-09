@@ -1,27 +1,39 @@
 ﻿function state = reset(state, params)
-%RESET  重置仿真状态（支持 M1 有界/无界初始模式）
+%RESET  重置仿真状态（按 modelType 分发）
 %
 % 输入
 %   state  (1,1) struct : 旧状态（可为空）
 %   params (1,1) struct : 合法参数（来自 params.validate）
 %
 % 输出
-%   state (1,1) struct : 新状态（包含 t/x/y/vx/vy/traj/mode/inField）
+%   state (1,1) struct : 新状态
 %
 % 说明
-%   - reset 只负责“设置初值”，不做单步推进
-%   - 若 bounded=true，会根据初始位置判断是否在磁场区域内
+%   - particle: M 系列粒子状态
+%   - rail    : R 系列导轨状态（R1/R2/R3 统一模板）
 
 arguments
     state (1,1) struct
     params (1,1) struct
 end
 
+modelType = resolveModelType(params);
+switch modelType
+    case "rail"
+        state = resetRailState(state, params);
+    otherwise
+        state = resetParticleState(state, params);
+end
+
+end
+
+function state = resetParticleState(state, params)
+%RESETPARTICLESTATE  重置 M 系列粒子状态
 state.t = 0.0;
+state.modelType = "particle";
 state.x = pickField(params, 'x0', 0.0);
 state.y = pickField(params, 'y0', 0.0);
 
-% 优先使用 validate 已派生的速度分量；若缺失则由 v0/thetaDeg 反推
 if isfield(params, 'vx0') && isfield(params, 'vy0')
     state.vx = double(params.vx0);
     state.vy = double(params.vy0);
@@ -33,14 +45,13 @@ else
     state.vy = double(v0) * sin(thetaRad);
 end
 
-% 轨迹缓存（首点）
 state.traj = [state.x, state.y];
 state.stepCount = 0;
 
 bounded = logicalField(params, 'bounded', false);
 if bounded
-    box = readBoundaryBox(params);
-    inField = isInsideRect([state.x; state.y], box);
+    box = geom.readBoundsFromParams(params);
+    inField = geom.isInsideBounds([state.x; state.y], box);
     state.inField = inField;
     if inField
         state.mode = "bounded_inside";
@@ -54,35 +65,111 @@ end
 
 end
 
-function box = readBoundaryBox(params)
-%READBOUNDARYBOX  读取并规范化矩形边界
-xMin = double(pickField(params, 'xMin', -1.0));
-xMax = double(pickField(params, 'xMax', 1.0));
-yMin = double(pickField(params, 'yMin', -1.0));
-yMax = double(pickField(params, 'yMax', 1.0));
+function state = resetRailState(state, params)
+%RESETRAILSTATE  重置 R 系列导轨状态
+state.t = 0.0;
+state.modelType = "rail";
+state.x = pickField(params, 'x0', 0.0);
+state.y = pickField(params, 'y0', 0.0);
+state.vx = pickField(params, 'v0', 0.0);
+state.vy = 0.0;
+state.traj = [state.x, state.y];
+state.stepCount = 0;
+state.qHeat = 0.0;
 
-if xMin > xMax
-    t = xMin;
-    xMin = xMax;
-    xMax = t;
+inField = isRailInField([state.x; state.y], params);
+state.inField = inField;
+
+if logicalField(params, 'bounded', false)
+    if inField
+        state.mode = "rail_bounded_inside";
+    else
+        state.mode = "rail_bounded_outside";
+    end
+else
+    state.mode = "rail_unbounded";
 end
-if yMin > yMax
-    t = yMin;
-    yMin = yMax;
-    yMax = t;
+
+state = attachRailOutputs(state, params, inField);
+
 end
 
-box = struct('xMin', xMin, 'xMax', xMax, 'yMin', yMin, 'yMax', yMax);
+function state = attachRailOutputs(state, params, inField)
+%ATTACHRAILOUTPUTS  计算并挂载 R 系列输出量
+vx = double(pickField(state, 'vx', 0.0));
+L = max(double(pickField(params, 'L', 1.0)), 1e-9);
+R = max(double(pickField(params, 'R', 1.0)), 1e-12);
+loopClosed = logicalField(params, 'loopClosed', false);
+
+if inField
+    epsilon = signedB(params) * L * vx;
+else
+    epsilon = 0.0;
 end
 
-function tf = isInsideRect(r, box)
-%ISINSIDERECT  判断点是否位于边界盒内部（含边界）
-x = double(r(1));
-y = double(r(2));
-tol = 1e-12;
+if loopClosed
+    current = epsilon / R;
+    % 安培力方向必须阻碍导体棒当前速度（楞次定律）
+    fMag = -signedB(params) * current * L;
+    pElec = current^2 * R;
+else
+    current = 0.0;
+    fMag = 0.0;
+    pElec = 0.0;
+end
 
-tf = (x >= box.xMin - tol) && (x <= box.xMax + tol) && ...
-     (y >= box.yMin - tol) && (y <= box.yMax + tol);
+state.epsilon = epsilon;
+state.current = current;
+state.fMag = fMag;
+state.pElec = pElec;
+state.pMech = double(pickField(params, 'Fdrive', 0.0)) * vx;
+if ~isfield(state, 'qHeat')
+    state.qHeat = 0.0;
+end
+
+state.rail = struct( ...
+    'L', L, ...
+    'x', double(state.x), ...
+    'yCenter', double(state.y), ...
+    'inField', logical(inField), ...
+    'epsilon', epsilon, ...
+    'current', current, ...
+    'fMag', fMag, ...
+    'pElec', pElec, ...
+    'qHeat', double(state.qHeat) ...
+);
+
+end
+
+function inField = isRailInField(r, params)
+%ISRAILINFIELD  计算导体棒中心是否位于磁场有效区域
+if ~logicalField(params, 'bounded', false)
+    inField = true;
+    return;
+end
+box = geom.readBoundsFromParams(params);
+inField = geom.isInsideBounds(r, box);
+end
+
+function modelType = resolveModelType(params)
+%RESOLVEMODELTYPE  解析当前参数对应模型类型
+modelType = lower(strtrim(string(pickField(params, 'modelType', "particle"))));
+if startsWith(modelType, "rail")
+    modelType = "rail";
+else
+    modelType = "particle";
+end
+end
+
+function Bz = signedB(params)
+%SIGNEDB  按方向得到带符号 Bz（出屏为正，入屏为负）
+B = double(pickField(params, 'B', 0.0));
+Bdir = lower(strtrim(string(pickField(params, 'Bdir', "out"))));
+if Bdir == "in"
+    Bz = -B;
+else
+    Bz = B;
+end
 end
 
 function v = logicalField(s, name, fallback)
@@ -99,12 +186,6 @@ end
 
 function v = pickField(s, name, fallback)
 %PICKFIELD  安全读取字段（缺失则返回 fallback）
-% 输入
-%   s        struct : 目标结构体
-%   name     char   : 字段名
-%   fallback any    : 缺失时的返回值
-% 输出
-%   v        any    : 读取到的值或 fallback
 if isstruct(s) && isfield(s, name)
     v = s.(name);
 else

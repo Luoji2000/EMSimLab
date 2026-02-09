@@ -256,7 +256,7 @@
             % Create pGrid
             comp.pGrid = uigridlayout(comp.ParticlePanel);
             comp.pGrid.ColumnWidth = {90, '1x'};
-            comp.pGrid.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
+            comp.pGrid.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit'};
             comp.pGrid.ColumnSpacing = 8;
             comp.pGrid.RowSpacing = 6;
             comp.pGrid.Padding = [8 8 8 8];
@@ -302,6 +302,30 @@
             comp.YLabel.Interpreter = 'tex';
             comp.YLabel.Text = 'Y(m)';
 
+            % Create lblV0
+            comp.lblV0 = uilabel(comp.pGrid);
+            comp.lblV0.Layout.Row = 7;
+            comp.lblV0.Layout.Column = 1;
+            comp.lblV0.Interpreter = 'tex';
+            comp.lblV0.Text = 'v_0(m/s)';
+
+            % Create V0Field
+            comp.V0Field = uieditfield(comp.pGrid, 'numeric');
+            comp.V0Field.Layout.Row = 7;
+            comp.V0Field.Layout.Column = 2;
+
+            % Create lblTheta
+            comp.lblTheta = uilabel(comp.pGrid);
+            comp.lblTheta.Layout.Row = 8;
+            comp.lblTheta.Layout.Column = 1;
+            comp.lblTheta.Interpreter = 'tex';
+            comp.lblTheta.Text = '\theta(deg)';
+
+            % Create ThetaField
+            comp.ThetaField = uieditfield(comp.pGrid, 'numeric');
+            comp.ThetaField.Layout.Row = 8;
+            comp.ThetaField.Layout.Column = 2;
+
             % Create XLabel
             comp.XLabel = uilabel(comp.pGrid);
             comp.XLabel.Layout.Row = 5;
@@ -344,7 +368,7 @@
             % Create fGrid
             comp.fGrid = uigridlayout(comp.FieldPanel);
             comp.fGrid.ColumnWidth = {90, '1x'};
-            comp.fGrid.RowHeight = {'fit', 'fit', 'fit', 'fit'};
+            comp.fGrid.RowHeight = {'fit', 'fit'};
             comp.fGrid.ColumnSpacing = 8;
             comp.fGrid.RowSpacing = 6;
             comp.fGrid.Padding = [8 8 8 8];
@@ -352,19 +376,9 @@
             % Create BdirDropDown
             comp.BdirDropDown = uidropdown(comp.fGrid);
             comp.BdirDropDown.Items = {'出屏', '入屏'};
-            comp.BdirDropDown.Layout.Row = 4;
+            comp.BdirDropDown.Layout.Row = 2;
             comp.BdirDropDown.Layout.Column = 2;
             comp.BdirDropDown.Value = '出屏';
-
-            % Create ThetaField
-            comp.ThetaField = uieditfield(comp.fGrid, 'numeric');
-            comp.ThetaField.Layout.Row = 3;
-            comp.ThetaField.Layout.Column = 2;
-
-            % Create V0Field
-            comp.V0Field = uieditfield(comp.fGrid, 'numeric');
-            comp.V0Field.Layout.Row = 2;
-            comp.V0Field.Layout.Column = 2;
 
             % Create BField
             comp.BField = uieditfield(comp.fGrid, 'numeric');
@@ -373,23 +387,9 @@
 
             % Create lblBdir
             comp.lblBdir = uilabel(comp.fGrid);
-            comp.lblBdir.Layout.Row = 4;
+            comp.lblBdir.Layout.Row = 2;
             comp.lblBdir.Layout.Column = 1;
             comp.lblBdir.Text = 'B 方向';
-
-            % Create lblTheta
-            comp.lblTheta = uilabel(comp.fGrid);
-            comp.lblTheta.Layout.Row = 3;
-            comp.lblTheta.Layout.Column = 1;
-            comp.lblTheta.Interpreter = 'tex';
-            comp.lblTheta.Text = '\theta(deg)';
-
-            % Create lblV0
-            comp.lblV0 = uilabel(comp.fGrid);
-            comp.lblV0.Layout.Row = 2;
-            comp.lblV0.Layout.Column = 1;
-            comp.lblV0.Interpreter = 'tex';
-            comp.lblV0.Text = 'v_0(m/s)';
 
             % Create lblB
             comp.lblB = uilabel(comp.fGrid);

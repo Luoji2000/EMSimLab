@@ -1,26 +1,25 @@
-function tpl = getById(id)
-%GETBYID  按模板 id 返回模板定义
+﻿function tpl = getById(id)
+%GETBYID  按模板 ID 返回模板定义（含旧 ID 兼容映射）
 %
-% 输入
-%   id (1,1) string/char
-% 输出
-%   tpl (1,1) struct
+% 兼容策略
+%   - R1/R2/R3/R4 统一映射到 R
 
-% 获取注册表，并检验是否为空
 list = templates.registry();
 if isempty(list)
     error("templates:EmptyRegistry", "模板注册表为空。");
 end
 
-id = upper(strtrim(string(id)));     % 标准化输入 id ，转写为大写字符串 ， id最后可能是 char 或 string 类型
-ids = arrayfun(@(x) upper(string(x.id)), list);     % 获取所有注册模板的 id 列表，并转写为大写字符串 数组
-idx = find(ids == id, 1, "first");   % 查找第一个为true的索引位置
+token = upper(strtrim(string(id)));
+if ~isempty(regexp(token, '^R[0-9]+$', 'once'))
+    token = "R";
+end
 
-% 若未找到，抛出错误
+ids = upper(string({list.id}));
+idx = find(ids == token, 1, 'first');
 if isempty(idx)
     known = strjoin(unique(ids), ", ");
-    error("templates:NotFound", "未找到模板 id=%s（已注册：%s）", id, known);
+    error("templates:NotFound", "未找到模板 id=%s（已注册：%s）", token, known);
 end
-tpl = list(idx);
 
+tpl = list(idx);
 end

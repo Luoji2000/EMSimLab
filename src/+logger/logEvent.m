@@ -135,8 +135,16 @@ switch token
         label = "行数";
     case "requested_id"
         label = "请求模板ID";
+    case "raw_token"
+        label = "原始模板令牌";
     case "template_id"
         label = "模板ID";
+    case "current_template"
+        label = "当前模板";
+    case "current_schema"
+        label = "当前参数模式";
+    case "current_engine"
+        label = "当前引擎模式";
     case "schema_key"
         label = "参数模式";
     case "engine_key"
@@ -151,6 +159,10 @@ switch token
         label = "当前时间";
     case "enabled"
         label = "启用";
+    case "loop_closed"
+        label = "闭合回路";
+    case "drive_enabled"
+        label = "外力驱动";
     case "ui_render_path"
         label = "UI渲染路径";
     case "viz_scene_path"
@@ -235,6 +247,68 @@ switch token
         label = "vx";
     case "vy"
         label = "vy";
+    case "mode"
+        label = "模式";
+    case "model_type"
+        label = "模型";
+    case "rail_visible"
+        label = "导轨可见";
+    case "rod_visible"
+        label = "导体棒可见";
+    case "resistor_visible"
+        label = "电阻可见";
+    case "show_current"
+        label = "电流箭头显示";
+    case "current_source"
+        label = "电流方向来源";
+    case "show_drive_force"
+        label = "外力箭头显示";
+    case "show_ampere_force"
+        label = "安培力箭头显示";
+    case "epsilon"
+        label = "感应电动势";
+    case "current"
+        label = "电流";
+    case "fmag"
+        label = "安培力";
+    case "fdrive"
+        label = "外力";
+    case "x_out"
+        label = "输出x_t";
+    case "v_out"
+        label = "输出v_t";
+    case "q_heat_out"
+        label = "输出Q";
+    case "q_heat"
+        label = "焦耳热";
+    case "in_field"
+        label = "在磁场内";
+    case "from_class"
+        label = "旧组件";
+    case "to_class"
+        label = "新组件";
+    case "force_recreate"
+        label = "强制重建";
+    case "resolved_class"
+        label = "目标组件类";
+    case "actual_class"
+        label = "实际组件类";
+    case "old_class"
+        label = "旧组件类";
+    case "has_old_component"
+        label = "存在旧组件";
+    case "m1_class_exists"
+        label = "M1类可用";
+    case "r2_class_exists"
+        label = "R2类可用";
+    case "m1_path"
+        label = "M1类路径";
+    case "r2_path"
+        label = "R2类路径";
+    case "on_template_changed_path"
+        label = "模板切换函数路径";
+    case "main_app_path"
+        label = "MainApp路径";
     otherwise
         label = key;
 end
