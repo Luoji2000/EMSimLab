@@ -26,8 +26,10 @@ if modelType ~= "rail"
     return;
 end
 
-% R2 场景判定：存在外力驱动（按你当前阶段先聚焦 R2）
-isDriveScene = logicalField(params, 'driveEnabled', false) && abs(double(pickField(params, 'Fdrive', 0.0))) > 1e-12;
+% R2 场景判定：只要“有外力驱动开关”为真，就按非 R1 场景处理
+% 说明
+%   - 这里不再用 |Fdrive|>0 作为判定条件，避免“已选择有外力”却被当成 R1。
+isDriveScene = logicalField(params, 'driveEnabled', false);
 if ~isDriveScene
     [handles, cache] = ensurePlotHandles(app);
     cache = clearHistoryAndShowMessage(handles, cache, "R1 场景暂不绘制曲线");

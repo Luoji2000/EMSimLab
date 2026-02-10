@@ -235,6 +235,8 @@ switch token
         label = "有界模式";
     case "box_visible"
         label = "边框可见";
+    case "cache_hit"
+        label = "缓存命中";
     case "auto_follow"
         label = "自动跟随";
     case "follow_span"
@@ -251,6 +253,12 @@ switch token
         label = "模式";
     case "model_type"
         label = "模型";
+    case "wall_x"
+        label = "粗线x";
+    case "slit_center_y"
+        label = "小孔中心y";
+    case "slit_height"
+        label = "小孔高度";
     case "rail_visible"
         label = "导轨可见";
     case "rod_visible"
@@ -273,6 +281,10 @@ switch token
         label = "安培力";
     case "fdrive"
         label = "外力";
+    case "sub_dt"
+        label = "子步长";
+    case "sub_steps"
+        label = "子步数";
     case "x_out"
         label = "输出x_t";
     case "v_out"
@@ -301,10 +313,14 @@ switch token
         label = "M1类可用";
     case "r2_class_exists"
         label = "R2类可用";
+    case "m5_class_exists"
+        label = "M5类可用";
     case "m1_path"
         label = "M1类路径";
     case "r2_path"
         label = "R2类路径";
+    case "m5_path"
+        label = "M5类路径";
     case "on_template_changed_path"
         label = "模板切换函数路径";
     case "main_app_path"

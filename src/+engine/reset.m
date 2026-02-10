@@ -71,6 +71,7 @@ state.t = 0.0;
 state.modelType = "rail";
 state.x = pickField(params, 'x0', 0.0);
 state.y = pickField(params, 'y0', 0.0);
+% R 系列统一使用参数 v0 作为初速度（R2 也允许用户编辑）
 state.vx = pickField(params, 'v0', 0.0);
 state.vy = 0.0;
 state.traj = [state.x, state.y];
@@ -100,29 +101,15 @@ vx = double(pickField(state, 'vx', 0.0));
 L = max(double(pickField(params, 'L', 1.0)), 1e-9);
 R = max(double(pickField(params, 'R', 1.0)), 1e-12);
 loopClosed = logicalField(params, 'loopClosed', false);
+Bz = engine.helpers.signedBFromParams(params);
+Fdrive = double(pickField(params, 'Fdrive', 0.0));
+out = physics.railOutputsNoFriction(vx, L, R, Bz, logical(inField), loopClosed, Fdrive);
 
-if inField
-    epsilon = signedB(params) * L * vx;
-else
-    epsilon = 0.0;
-end
-
-if loopClosed
-    current = epsilon / R;
-    % 安培力方向必须阻碍导体棒当前速度（楞次定律）
-    fMag = -signedB(params) * current * L;
-    pElec = current^2 * R;
-else
-    current = 0.0;
-    fMag = 0.0;
-    pElec = 0.0;
-end
-
-state.epsilon = epsilon;
-state.current = current;
-state.fMag = fMag;
-state.pElec = pElec;
-state.pMech = double(pickField(params, 'Fdrive', 0.0)) * vx;
+state.epsilon = out.epsilon;
+state.current = out.current;
+state.fMag = out.fMag;
+state.pElec = out.pElec;
+state.pMech = out.pMech;
 if ~isfield(state, 'qHeat')
     state.qHeat = 0.0;
 end
@@ -132,10 +119,10 @@ state.rail = struct( ...
     'x', double(state.x), ...
     'yCenter', double(state.y), ...
     'inField', logical(inField), ...
-    'epsilon', epsilon, ...
-    'current', current, ...
-    'fMag', fMag, ...
-    'pElec', pElec, ...
+    'epsilon', out.epsilon, ...
+    'current', out.current, ...
+    'fMag', out.fMag, ...
+    'pElec', out.pElec, ...
     'qHeat', double(state.qHeat) ...
 );
 
@@ -158,17 +145,6 @@ if startsWith(modelType, "rail")
     modelType = "rail";
 else
     modelType = "particle";
-end
-end
-
-function Bz = signedB(params)
-%SIGNEDB  按方向得到带符号 Bz（出屏为正，入屏为负）
-B = double(pickField(params, 'B', 0.0));
-Bdir = lower(strtrim(string(pickField(params, 'Bdir', "out"))));
-if Bdir == "in"
-    Bz = -B;
-else
-    Bz = B;
 end
 end
 

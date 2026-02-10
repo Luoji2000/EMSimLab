@@ -7,7 +7,7 @@
 %
 % 行为
 %   1) 检查 app 与关键字段可用性
-%   2) 读取单帧步长并推进引擎状态
+%   2) 读取渲染帧步长，并拆分为多个物理子步推进
 %   3) 触发 UI 渲染
 %   4) 按节流规则输出播放日志
 %
@@ -24,10 +24,11 @@ if ~(isprop(app, 'State') && isprop(app, 'Params'))
 end
 
 try
-    stepDt = resolveStepDt(app);
+    frameDt = resolveFrameDt(app);
 
-    % 1) 推进一步
-    app.State = engine.step(app.State, app.Params, stepDt);
+    % 1) 物理推进（子步进）
+    %    每个渲染帧内自动拆分成多个物理小步，减少轨迹“跳点感”。
+    [app.State, subSteps, subDt] = advanceWithSubsteps(app.State, app.Params, frameDt);
     app.Params = control.mergeRailOutputs(app.Params, app.State);
     ui.applyPayload(app, app.Params);
 
@@ -40,7 +41,7 @@ try
         if isfield(app.State, 't')
             tNow = app.State.t;
         end
-        payload = buildTickLogPayload(app, stepDt, tNow);
+        payload = buildTickLogPayload(app, frameDt, subDt, subSteps, tNow);
         logger.logEvent(app, '调试', '连续播放推进', payload);
     end
 catch err
@@ -51,9 +52,14 @@ catch err
 end
 end
 
-function payload = buildTickLogPayload(app, stepDt, tNow)
+function payload = buildTickLogPayload(app, frameDt, subDt, subSteps, tNow)
 %BUILDTICKLOGPAYLOAD  生成单帧推进日志负载
-payload = struct('dt', stepDt, 't', tNow);
+payload = struct( ...
+    'dt', frameDt, ...
+    'sub_dt', subDt, ...
+    'sub_steps', subSteps, ...
+    't', tNow ...
+);
 
 if ~(isprop(app, 'State') && isstruct(app.State))
     return;
@@ -76,6 +82,84 @@ payload.q_heat = double(pickField(state, 'qHeat', 0.0));
 payload.in_field = logicalField(state, 'inField', true);
 end
 
+function [stateOut, subSteps, subDt] = advanceWithSubsteps(stateIn, params, frameDt)
+%ADVANCEWITHSUBSTEPS  单帧子步进推进
+%
+% 输入
+%   stateIn : 当前状态
+%   params  : 当前参数
+%   frameDt : 单渲染帧时长（秒）
+%
+% 输出
+%   stateOut : 子步进后的状态
+%   subSteps : 子步数量
+%   subDt    : 单个子步的基础步长（未乘 speedScale）
+%
+% 设计目标
+%   1) 渲染帧率不变时，通过子步提高轨迹平滑度
+%   2) 保持现有 engine.step 接口不变（由 engine 内部处理 speedScale）
+%   3) 自动按“角度上限 + 时间上限”估算子步数量
+
+stateOut = stateIn;
+if frameDt <= 0
+    subSteps = 1;
+    subDt = frameDt;
+    return;
+end
+
+[subSteps, subDt] = computeSubstepPlan(params, frameDt);
+for k = 1:subSteps
+    stateOut = engine.step(stateOut, params, subDt);
+end
+end
+
+function [subSteps, subDt] = computeSubstepPlan(params, frameDt)
+%COMPUTESUBSTEPPLAN  估算本帧需要的物理子步数量
+%
+% 规则
+%   - 时间上限：单个物理子步不超过 maxSubDt（默认 1/240 s）
+%   - 角度上限：粒子模型单个子步转角不超过 maxAngle（默认 0.12 rad）
+%   - 总子步数限制：不超过 maxSubSteps（默认 64）
+
+maxSubDt = 1/240;
+maxAngle = 0.12;
+maxSubSteps = 64;
+
+speedScale = max(0.01, double(pickField(params, 'speedScale', 1.0)));
+physFrameDt = frameDt * speedScale;
+
+% 基于时间上限的子步数
+nByTime = ceil(physFrameDt / maxSubDt);
+nByTime = max(nByTime, 1);
+
+% 基于角速度上限的子步数（仅粒子模型有意义）
+modelType = lower(strtrim(string(pickField(params, 'modelType', "particle"))));
+if startsWith(modelType, "rail")
+    nByAngle = 1;
+else
+    omega = cyclotronOmega(params);
+    nByAngle = ceil(abs(omega) * physFrameDt / maxAngle);
+    nByAngle = max(nByAngle, 1);
+end
+
+subSteps = min(maxSubSteps, max(nByTime, nByAngle));
+subDt = frameDt / subSteps;
+end
+
+function omega = cyclotronOmega(params)
+%CYCLOTRONOMEGA  估算角速度 omega = q*Bz/m（用于子步规划）
+q = double(pickField(params, 'q', 0.0));
+m = max(double(pickField(params, 'm', 1.0)), 1e-12);
+B = double(pickField(params, 'B', 0.0));
+Bdir = lower(strtrim(string(pickField(params, 'Bdir', "out"))));
+if Bdir == "in"
+    Bz = -B;
+else
+    Bz = B;
+end
+omega = q * Bz / m;
+end
+
 function tf = isLiveApp(app)
 %ISLIVEAPP  判断 app 是否为有效句柄对象
 tf = false;
@@ -92,21 +176,21 @@ catch
 end
 end
 
-function stepDt = resolveStepDt(app)
-%RESOLVESTEPDT  解析当前单帧步长
+function stepDt = resolveFrameDt(app)
+%RESOLVEFRAMEDT  解析当前渲染帧步长
 %
 % 规则
 %   1) 优先使用 app.getPlaybackPeriod()
 %   2) 回退到 app.PlaybackPeriod
-%   3) 最终兜底为 0.05，并限制最小值 1e-4
-stepDt = 0.05;
+%   3) 最终兜底为 1/30，并限制最小值 1e-4
+stepDt = 1/30;
 if ismethod(app, 'getPlaybackPeriod')
     stepDt = double(app.getPlaybackPeriod());
 else
     try
         stepDt = double(app.PlaybackPeriod);
     catch
-        stepDt = 0.05;
+        stepDt = 1/30;
     end
 end
 stepDt = max(stepDt, 1e-4);

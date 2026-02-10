@@ -56,7 +56,8 @@
         LogLines            string = strings(0, 1)
         MaxLogLines         (1,1) double = 500
         PlaybackTimer       = []
-        PlaybackPeriod      (1,1) double = 0.05
+        % 播放器渲染节拍（秒）：默认 30 FPS，视觉更平滑
+        PlaybackPeriod      (1,1) double = 1/30
         IsPlaying           (1,1) logical = false
     end
 
@@ -383,8 +384,10 @@
                 'has_old_component', hasOldComponent, ...
                 'm1_class_exists', exist('M1_for_test', 'class') == 8, ...
                 'r2_class_exists', exist('R2_for_test', 'class') == 8, ...
+                'm5_class_exists', exist('M5_for_test', 'class') == 8, ...
                 'm1_path', string(which('M1_for_test')), ...
-                'r2_path', string(which('R2_for_test')) ...
+                'r2_path', string(which('R2_for_test')), ...
+                'm5_path', string(which('M5_for_test')) ...
             ));
 
             if isempty(app.ParamHostGrid) || ~isgraphics(app.ParamHostGrid)
@@ -449,6 +452,11 @@
             engineToken = "";
             if isprop(app, 'CurrentEngineKey')
                 engineToken = lower(strtrim(string(app.CurrentEngineKey)));
+            end
+
+            if token == "M5"
+                className = "M5_for_test";
+                return;
             end
 
             if startsWith(token, "R") || engineToken == "rail"

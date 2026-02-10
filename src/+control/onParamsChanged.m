@@ -34,7 +34,12 @@ if isprop(app, 'CurrentEngineKey')
     p.modelType = string(app.CurrentEngineKey);
 end
 if isprop(app, 'CurrentTemplateId')
-    p.templateId = string(app.CurrentTemplateId);
+    % R 系列允许参数组件在统一模板下细分场景（R1/R2...），不强行覆盖
+    isRailPayload = isfield(p, 'modelType') && startsWith(lower(strtrim(string(p.modelType))), "rail");
+    hasCustomTemplateId = isfield(p, 'templateId') && strlength(strtrim(string(p.templateId))) > 0;
+    if ~(isRailPayload && hasCustomTemplateId)
+        p.templateId = string(app.CurrentTemplateId);
+    end
 end
 
 % 3) 统一参数校验

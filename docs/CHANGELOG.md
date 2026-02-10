@@ -1,5 +1,15 @@
 ﻿# 更新日志
 
+## 2026-02-10
+- 新增：M5 质谱仪模板第一版接入（`src/+templates/+defs/M5.m`），并加入模板注册表与模板预设链路。
+- 新增：参数组件 `m/M5_for_test.m`，支持统一 payload 接口与 `q/m = 2*pi/(B*T)` 输出。
+- 新增：M5 场景叠层渲染（左侧粗线 + 中间小孔 + 右半有界磁场）。
+- 新增：`params.validate` 的 M5 约束规则，强制 `xMin=specWallX`，避免磁场左边界越过质谱仪粗线。
+- 优化：连续播放默认节拍从 `0.05s` 调整为 `1/30s`（30 FPS）。
+- 优化：`control.onTick` 改为“单帧子步进推进”，按时间上限与角速度上限自动估算子步数量。
+- 优化：`viz.renderScene` 移除 `drawnow limitrate`，改为 `drawnow nocallbacks`，减少播放顿感。
+- 优化：磁场标记渲染新增缓存键机制，点阵未变化时跳过重建与重复写入，降低渲染抖动。
+- 新增：`tests/smoke_m5_minimal_loop.m` 冒烟测试脚本（用于模板切换与边界锁定链路验证）。
 ## 2026-02-09
 - 重构：R 系列模板统一为 `src/+templates/+defs/R.m`，`templates.getById` 新增 `R1/R2/R3/R4 -> R` 别名映射。
 - 优化：导轨场景速度箭头上移到上导轨外侧，避免与外力/安培力箭头重叠。
@@ -94,4 +104,5 @@
 - 迁移并整理 `simulinkcode/MagSim` 的结构，拆分为 `+Control/+Engine/+Viz/+Logger`。
 - 匀强磁场粒子运动改为解析更新，替换 ODE 求解器。
 - 主界面支持知识点与日志面板。
+
 

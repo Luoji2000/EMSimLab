@@ -101,28 +101,14 @@ end
 
 inFieldStart = isRailInField([x0; y0], params);
 loopClosed = logicalField(params, 'loopClosed', false);
+Bz = engine.helpers.signedBFromParams(params);
+L = max(double(pickField(params, 'L', 1.0)), 1e-9);
+R = max(double(pickField(params, 'R', 1.0)), 1e-12);
 
-if inFieldStart && loopClosed
-    % 闭环导轨模型：dv/dt = (Fdrive/m) - (k/m) v
-    k = railDampingK(params);
-    alpha = k / m;
-    b = Fdrive / m;
-    if abs(alpha) > 1e-12
-        vInf = b / alpha;
-        expTerm = exp(-alpha * dt);
-        v1 = vInf + (v0 - vInf) * expTerm;
-        x1 = x0 + vInf * dt + ((v0 - vInf) / alpha) * (1 - expTerm);
-    else
-        a = b;
-        v1 = v0 + a * dt;
-        x1 = x0 + v0 * dt + 0.5 * a * dt^2;
-    end
-else
-    % 开路主链：导体棒等效匀速（可选叠加外力）
-    a = Fdrive / m;
-    v1 = v0 + a * dt;
-    x1 = x0 + v0 * dt + 0.5 * a * dt^2;
-end
+% 仅“场内+闭路”时启用阻尼解析步进；其余情况退化为匀加速步进
+useDamping = inFieldStart && loopClosed;
+k = engine.helpers.railDampingK(Bz, L, R);
+[x1, v1, ~] = physics.railAdvanceNoFriction(x0, v0, m, Fdrive, k, dt, useDamping);
 
 y1 = y0;
 inFieldEnd = isRailInField([x1; y1], params);
@@ -148,7 +134,11 @@ else
 end
 
 state = attachRailOutputs(state, params, inFieldEnd);
-state.qHeat = qHeatPrev + max(0.0, double(state.pElec)) * double(dt);
+% 焦耳热采用“最新无摩擦能量递推公式”
+%   ΔQ_R = Fdrive*Δx - 1/2*m*(v1^2-v0^2)
+% 仅在场内闭路链路中累计
+dQ = physics.railHeatDeltaNoFriction(x0, x1, v0, v1, m, Fdrive, useDamping);
+state.qHeat = qHeatPrev + dQ;
 if isfield(state, 'rail') && isstruct(state.rail)
     state.rail.qHeat = double(state.qHeat);
 end
@@ -179,38 +169,24 @@ vx = double(pickField(state, 'vx', 0.0));
 L = max(double(pickField(params, 'L', 1.0)), 1e-9);
 R = max(double(pickField(params, 'R', 1.0)), 1e-12);
 loopClosed = logicalField(params, 'loopClosed', false);
+Bz = engine.helpers.signedBFromParams(params);
+Fdrive = double(pickField(params, 'Fdrive', 0.0));
+out = physics.railOutputsNoFriction(vx, L, R, Bz, logical(inField), loopClosed, Fdrive);
 
-if inField
-    epsilon = signedB(params) * L * vx;
-else
-    epsilon = 0.0;
-end
-
-if loopClosed
-    current = epsilon / R;
-    % 安培力方向必须阻碍导体棒当前速度（楞次定律）
-    fMag = -signedB(params) * current * L;
-    pElec = current^2 * R;
-else
-    current = 0.0;
-    fMag = 0.0;
-    pElec = 0.0;
-end
-
-state.epsilon = epsilon;
-state.current = current;
-state.fMag = fMag;
-state.pElec = pElec;
-state.pMech = double(pickField(params, 'Fdrive', 0.0)) * vx;
+state.epsilon = out.epsilon;
+state.current = out.current;
+state.fMag = out.fMag;
+state.pElec = out.pElec;
+state.pMech = out.pMech;
 state.rail = struct( ...
     'L', L, ...
     'x', double(state.x), ...
     'yCenter', double(state.y), ...
     'inField', logical(inField), ...
-    'epsilon', epsilon, ...
-    'current', current, ...
-    'fMag', fMag, ...
-    'pElec', pElec ...
+    'epsilon', out.epsilon, ...
+    'current', out.current, ...
+    'fMag', out.fMag, ...
+    'pElec', out.pElec ...
 );
 end
 
@@ -222,14 +198,6 @@ if ~logicalField(params, 'bounded', false)
 end
 box = geom.readBoundsFromParams(params);
 inField = geom.isInsideBounds(r, box);
-end
-
-function k = railDampingK(params)
-%RAILDAMPINGK  回路阻尼系数 k = B^2 L^2 / R
-B = abs(double(pickField(params, 'B', 0.0)));
-L = abs(double(pickField(params, 'L', 1.0)));
-R = max(double(pickField(params, 'R', 1.0)), 1e-12);
-k = (B * L)^2 / R;
 end
 
 function modelType = resolveModelType(params)
@@ -328,40 +296,23 @@ vNew = vOld;
 end
 
 function [rNew, vNew] = propagateInField(rOld, vOld, omega, dt)
-%PROPAGATEINFIELD  磁场内推进：旋转矩阵解析法
-if abs(omega) < 1e-12
-    [rNew, vNew] = propagateFree(rOld, vOld, dt);
-    return;
-end
-
-theta = double(omega) * double(dt);
-c = cos(theta);
-s = sin(theta);
-
-R = [c, s; -s, c];
-A = [s, (1 - c); -(1 - c), s];
-
-vNew = R * vOld;
-rNew = rOld + (A * vOld) / double(omega);
+%PROPAGATEINFIELD  磁场内推进：调用独立旋转矩阵算法
+%
+% 说明
+%   - 这里不再内联旋转矩阵公式，改为调用 physics.rotmatStep2D
+%   - 这样做的目的是把“核心公式”从流程控制中拆出来，便于：
+%       1) 集中审阅物理公式
+%       2) 单独编写测试
+%       3) 后续在 M 系列多模板间复用
+[rNew, vNew] = physics.rotmatStep2D(rOld, vOld, omega, dt);
 end
 
 function omega = cyclotronOmega(params)
 %CYCLOTRONOMEGA  计算回旋角速度 omega = q*Bz/m
 q = pickField(params, 'q', 0.0);
 m = max(pickField(params, 'm', 1.0), 1e-12);
-Bz = signedB(params);
+Bz = engine.helpers.signedBFromParams(params);
 omega = double(q) * Bz / double(m);
-end
-
-function Bz = signedB(params)
-%SIGNEDB  按方向得到带符号 Bz（出屏为正，入屏为负）
-B = double(pickField(params, 'B', 0.0));
-Bdir = lower(strtrim(string(pickField(params, 'Bdir', "out"))));
-if Bdir == "in"
-    Bz = -B;
-else
-    Bz = B;
-end
 end
 
 function v = logicalField(s, name, fallback)

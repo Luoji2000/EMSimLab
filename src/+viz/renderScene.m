@@ -20,6 +20,7 @@ doLog = shouldLogRender(state);
 cache = getRenderCache(ax);
 [xLim, yLim, viewSpan] = computeViewWindow(ax, state, p);
 modelType = resolveModelType(p, state);
+isMassSpec = isMassSpecTemplate(p, state);
 
 % 坐标轴设置
 ax.XLim = xLim;
@@ -38,6 +39,8 @@ end
 tNow = pickField(state, 't', 0.0);
 if modelType == "rail"
     title(ax, sprintf('导轨滑杆场景（t = %.3f s）', double(tNow)));
+elseif isMassSpec
+    title(ax, sprintf('质谱仪场景（t = %.3f s）', double(tNow)));
 else
     title(ax, sprintf('粒子运动场景（t = %.3f s）', double(tNow)));
 end
@@ -77,12 +80,14 @@ if modelType == "rail"
     hideHandle(cache.hDebugText);
     hideHandle(cache.hParticle);
     hideHandle(cache.hForce);
+    cache = hideMassSpecHandles(cache);
 
     setRenderCache(ax, cache);
     if doLog
         logAxesChildren(app, ax);
     end
-    drawnow limitrate nocallbacks;
+    % 不使用 limitrate，避免 MATLAB 内部限帧造成“明显顿感”
+    drawnow nocallbacks;
     if doLog
         logRenderFinalState(app, ax, cache, state);
     end
@@ -90,6 +95,10 @@ if modelType == "rail"
 end
 
 cache = hideRailOnlyHandles(cache);
+[cache, msInfo] = renderMassSpecOverlay(ax, cache, p, yLim, isMassSpec);
+if doLog && isMassSpec
+    logger.logEvent(app, '调试', '渲染-质谱仪', msInfo);
+end
 
 % 轨迹
 showTrail = logicalField(p, 'showTrail', true);
@@ -156,7 +165,8 @@ setRenderCache(ax, cache);
 if doLog
     logAxesChildren(app, ax);
 end
-drawnow limitrate nocallbacks;
+% 不使用 limitrate，避免 MATLAB 内部限帧造成“明显顿感”
+drawnow nocallbacks;
 if doLog
     logRenderFinalState(app, ax, cache, state);
 end
@@ -199,6 +209,12 @@ else
 end
 end
 
+function tf = isMassSpecTemplate(p, state)
+%ISMASSSPECTEMPLATE  判断当前是否 M5 质谱仪模板
+token = upper(strtrim(string(pickField(p, 'templateId', pickField(state, 'templateId', "")))));
+tf = token == "M5";
+end
+
 function cache = hideRailOnlyHandles(cache)
 %HIDERAILONLYHANDLES  在粒子模型下隐藏导轨专用图元
 hideHandle(cache.hRailTop);
@@ -208,6 +224,12 @@ hideHandle(cache.hResistor);
 hideHandle(cache.hCurrentArrow);
 hideHandle(cache.hDriveArrow);
 hideHandle(cache.hAmpereArrow);
+end
+
+function cache = hideMassSpecHandles(cache)
+%HIDEMASSSPECHANDLES  隐藏质谱仪专用图元
+hideHandle(cache.hSpecWallLower);
+hideHandle(cache.hSpecWallUpper);
 end
 
 function cache = getRenderCache(ax)
@@ -226,7 +248,11 @@ cache = struct( ...
     'hResistor', [], ...
     'hCurrentArrow', [], ...
     'hDriveArrow', [], ...
-    'hAmpereArrow', [] ...
+    'hAmpereArrow', [], ...
+    'hSpecWallLower', [], ...
+    'hSpecWallUpper', [], ...
+    'lastBMarkKey', "", ...
+    'lastBMarkCount', 0 ...
 );
 
 ud = ax.UserData;
@@ -428,7 +454,8 @@ info = struct( ...
     'marker', "-", ...
     'bdir', "-", ...
     'bounded', false, ...
-    'box_visible', false ...
+    'box_visible', false, ...
+    'cache_hit', false ...
 );
 
 bounded = logicalField(p, 'bounded', false);
@@ -441,6 +468,8 @@ info.box_visible = boxVisible;
 showB = logicalField(p, 'showBMarks', true);
 if ~showB
     hideHandle(cache.hBMarks);
+    cache.lastBMarkKey = "";
+    cache.lastBMarkCount = 0;
     return;
 end
 
@@ -455,12 +484,32 @@ else
     markFace = [0.75, 0.86, 1.00];
 end
 
+% 生成“磁场标记缓存键”，用于跳过重复点阵重建与重复 set(XData/YData)
 if bounded
-    % 有界模式固定按“整块磁场区域”铺设标记，不随当前视窗裁剪。
-    % 这样在拖拽坐标轴或粒子远离后，磁场标记仍保持完整一致。
     box = geom.readBoundsFromParams(p);
+    key = composeBMarkKeyBounded(box, marker);
+    if isLiveHandle(cache.hBMarks) && cache.lastBMarkKey == key
+        % 点阵未变化时仅保持可见，避免高频 set 带来的渲染抖动
+        set(cache.hBMarks, 'Visible', 'on');
+        info.visible = true;
+        info.mark_count = cache.lastBMarkCount;
+        info.marker = marker;
+        info.bdir = Bdir;
+        info.cache_hit = true;
+        return;
+    end
     [xx, yy] = buildBMarkGridInBox(box);
 else
+    key = composeBMarkKeyView(xLim, yLim, viewSpan, marker);
+    if isLiveHandle(cache.hBMarks) && cache.lastBMarkKey == key
+        set(cache.hBMarks, 'Visible', 'on');
+        info.visible = true;
+        info.mark_count = cache.lastBMarkCount;
+        info.marker = marker;
+        info.bdir = Bdir;
+        info.cache_hit = true;
+        return;
+    end
     [xx, yy] = buildBMarkGrid(xLim, yLim, viewSpan);
 end
 
@@ -488,10 +537,29 @@ else
     set(cache.hBMarks, 'MarkerFaceColor', 'none');
 end
 
+cache.lastBMarkKey = key;
+cache.lastBMarkCount = numel(xx);
 info.visible = true;
-info.mark_count = numel(xx);
+info.mark_count = cache.lastBMarkCount;
 info.marker = marker;
 info.bdir = Bdir;
+end
+
+function key = composeBMarkKeyBounded(box, marker)
+%COMPOSEBMARKKEYBOUNDED  生成有界磁场标记缓存键
+key = string(sprintf( ...
+    'bounded|%.6f|%.6f|%.6f|%.6f|%s', ...
+    box.xMin, box.xMax, box.yMin, box.yMax, char(marker)));
+end
+
+function key = composeBMarkKeyView(xLim, yLim, viewSpan, marker)
+%COMPOSEBMARKKEYVIEW  生成无界磁场标记缓存键（按视窗量化）
+%
+% 说明
+%   - 这里对视窗值做小数位量化，减少浮点噪声导致的频繁缓存失效
+key = string(sprintf( ...
+    'view|%.3f|%.3f|%.3f|%.3f|%.3f|%s', ...
+    xLim(1), xLim(2), yLim(1), yLim(2), viewSpan, char(marker)));
 end
 
 function [xx, yy] = buildBMarkGrid(xLim, yLim, viewSpan)
@@ -542,6 +610,75 @@ else
 end
 
 visible = true;
+end
+
+function [cache, info] = renderMassSpecOverlay(ax, cache, p, yLim, isMassSpec)
+%RENDERMASSSPECOVERLAY  绘制 M5 质谱仪左侧粗线与狭缝
+%
+% 场景语义
+%   - 左侧粗线：质谱仪入口屏蔽板
+%   - 中间留孔：允许粒子从狭缝进入右半磁场
+%   - 磁场区域本体仍由 bounded+xMin/xMax/yMin/yMax 控制
+info = struct( ...
+    'visible', false, ...
+    'wall_x', 0.0, ...
+    'slit_center_y', 0.0, ...
+    'slit_height', 0.0 ...
+);
+
+if ~isMassSpec
+    cache = hideMassSpecHandles(cache);
+    return;
+end
+
+wallX = double(pickField(p, 'specWallX', pickField(p, 'xMin', 0.0)));
+slitCenterY = double(pickField(p, 'slitCenterY', pickField(p, 'y0', 0.0)));
+slitHeight = max(double(pickField(p, 'slitHeight', 0.40)), 0.05);
+slitYMin = slitCenterY - 0.5 * slitHeight;
+slitYMax = slitCenterY + 0.5 * slitHeight;
+lineWidth = 6.0;
+lineColor = [0.05, 0.05, 0.05];
+
+% 下半段粗线
+if yLim(1) < slitYMin
+    if ~isLiveHandle(cache.hSpecWallLower)
+        cache.hSpecWallLower = line('Parent', ax, ...
+            'XData', [wallX, wallX], ...
+            'YData', [yLim(1), min(slitYMin, yLim(2))], ...
+            'Color', lineColor, ...
+            'LineWidth', lineWidth);
+    else
+        set(cache.hSpecWallLower, ...
+            'XData', [wallX, wallX], ...
+            'YData', [yLim(1), min(slitYMin, yLim(2))], ...
+            'Visible', 'on');
+    end
+else
+    hideHandle(cache.hSpecWallLower);
+end
+
+% 上半段粗线
+if yLim(2) > slitYMax
+    if ~isLiveHandle(cache.hSpecWallUpper)
+        cache.hSpecWallUpper = line('Parent', ax, ...
+            'XData', [wallX, wallX], ...
+            'YData', [max(slitYMax, yLim(1)), yLim(2)], ...
+            'Color', lineColor, ...
+            'LineWidth', lineWidth);
+    else
+        set(cache.hSpecWallUpper, ...
+            'XData', [wallX, wallX], ...
+            'YData', [max(slitYMax, yLim(1)), yLim(2)], ...
+            'Visible', 'on');
+    end
+else
+    hideHandle(cache.hSpecWallUpper);
+end
+
+info.visible = handleVisible(cache.hSpecWallLower) || handleVisible(cache.hSpecWallUpper);
+info.wall_x = wallX;
+info.slit_center_y = slitCenterY;
+info.slit_height = slitHeight;
 end
 
 function [cache, info] = renderRailSceneBody(ax, cache, state, p, viewSpan)

@@ -602,6 +602,8 @@
             % 统一 R 模板：不按子编号锁死控件，交由参数开关控制
             comp.driveForceDropDown.Enable = 'on';
             comp.ShowAmpereForceCheck.Enable = comp.boolToOnOff(payload.loopClosed);
+            % R2 下 v0 仍允许编辑：是否有外力不影响 v0 输入可编辑性
+            comp.vField.Enable = 'on';
             comp.updateDriveForceEnable(payload.driveEnabled);
         end
 
@@ -636,8 +638,22 @@
             payload.m = max(comp.toDouble(payload.m, base.m), 1e-6);
             payload.driveEnabled = comp.toLogical(payload.driveEnabled, base.driveEnabled);
             payload.Fdrive = comp.toDouble(payload.Fdrive, base.Fdrive);
-            % 统一 R 模板下：当前用“外力驱动”联动闭合回路，方便在单模板内切 R1/R2
-            payload.loopClosed = payload.loopClosed || payload.driveEnabled;
+            % 统一 R 模板下的场景规则：
+            %   - 选择“有外力” => 进入 R2 场景（闭路、模板ID=R2，v0 由用户输入）
+            %   - 选择“无外力” => 进入 R1 场景（开路、Fdrive=0、模板ID=R1）
+            prevDrive = comp.toLogical(pickField(previousPayload, 'driveEnabled', false), false);
+            if payload.driveEnabled
+                payload.templateId = "R2";
+                payload.loopClosed = true;
+                % 从“无外力”切到“有外力”时，若 Fdrive 仍为 0，则给一个可观察默认值
+                if ~prevDrive && abs(payload.Fdrive) <= 1e-12
+                    payload.Fdrive = 1.0;
+                end
+            else
+                payload.templateId = "R1";
+                payload.loopClosed = false;
+                payload.Fdrive = 0.0;
+            end
             payload.bounded = comp.toLogical(payload.bounded, base.bounded);
             payload.xMin = comp.toDouble(payload.xMin, base.xMin);
             payload.xMax = comp.toDouble(payload.xMax, base.xMax);
@@ -675,10 +691,6 @@
 
             if ~payload.loopClosed
                 payload.showAmpereForce = false;
-            end
-
-            if ~payload.driveEnabled
-                payload.Fdrive = 0.0;
             end
 
             % 防止前后切换时把强制字段丢失

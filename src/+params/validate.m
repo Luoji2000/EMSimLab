@@ -47,6 +47,7 @@ end
 %      - 选择电子/质子时：强制 unitMode=particle，并覆盖 q/m 为预设值
 if isfield(schema, "key") && strcmpi(string(schema.key), "particle")
     p = applyParticleUnitRules(p);
+    p = applyMassSpecRules(p);
 end
 
 % 2) particle 模板派生量：由 (v0, thetaDeg) 反推 (vx0, vy0)
@@ -92,6 +93,52 @@ if any(particleType == ["electron","proton"])
     if hasField(p, "m")
         p.m = mVal;
     end
+end
+end
+
+function p = applyMassSpecRules(p)
+%APPLYMASSSPECRULES  M5 模板参数约束（右半有界磁场）
+%
+% 约束目标
+%   1) M5 强制有界磁场
+%   2) xMin 固定在质谱仪左侧粗线（specWallX）
+%   3) xMax 始终大于 xMin，避免磁场区域退化
+if ~(hasField(p, "templateId") && strcmpi(strtrim(string(p.templateId)), "M5"))
+    return;
+end
+
+if hasField(p, "specWallX")
+    wallX = toDouble(p.specWallX, 0.0);
+else
+    wallX = 0.0;
+end
+p.specWallX = wallX;
+
+if hasField(p, "bounded")
+    p.bounded = true;
+end
+
+if hasField(p, "xMin")
+    p.xMin = wallX;
+else
+    p.xMin = wallX;
+end
+
+if hasField(p, "xMax")
+    p.xMax = max(toDouble(p.xMax, wallX + 1.0), wallX + 1e-6);
+else
+    p.xMax = wallX + 1.0;
+end
+
+if hasField(p, "slitCenterY")
+    p.slitCenterY = toDouble(p.slitCenterY, 0.0);
+else
+    p.slitCenterY = 0.0;
+end
+if hasField(p, "slitHeight")
+    p.slitHeight = max(toDouble(p.slitHeight, 0.40), 0.05);
+else
+    p.slitHeight = 0.40;
 end
 end
 

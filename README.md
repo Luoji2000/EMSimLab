@@ -72,6 +72,16 @@ boot.openReleaseApp()
    - 曲线页改为三子图：`v(t)`、`I(t)`、`F_mag(t)`；
    - R1（无外力）阶段显示占位说明，R2（有外力）阶段绘制实时曲线；
    - 时间回退（重置/切模）会自动清空历史，避免旧曲线残留。
+8. M5 质谱仪模板第一版已接入：
+   - 新增模板定义 `src/+templates/+defs/M5.m`；
+   - 新增参数组件 `m/M5_for_test.m`；
+   - 场景叠层支持“左侧粗线 + 中间小孔 + 右半有界磁场”；
+   - M5 下 `xMin` 强制锁定 `specWallX`，避免左边界越过粗线。
+9. 连续播放平滑化已接入：
+   - 定时渲染节拍默认改为 `30 FPS`（`PlaybackPeriod=1/30`）；
+   - `control.onTick` 改为单帧子步进推进（按角速度/步长自适应拆分）；
+   - `viz.renderScene` 改为 `drawnow nocallbacks`，移除 `limitrate` 限帧顿感；
+   - 磁场标记加入缓存键机制，减少重复点阵重建导致的渲染抖动。
 
 ## UI 协作流程（约定）
 
