@@ -10,7 +10,8 @@
 %   state (1,1) struct : 推进后的新状态
 %
 % 说明
-%   - particle: 旋转矩阵解析推进（含有界跨界二分）
+%   - particle: 旋转矩阵解析推进（纯磁场，含有界跨界二分）
+%   - selector: 交叉场解析推进（E+B，含有界跨界二分）
 %   - rail    : 导轨模型推进（R 统一模板：开路匀速 + 闭路阻尼）
 
 arguments
@@ -27,6 +28,8 @@ modelType = resolveModelType(params);
 switch modelType
     case "rail"
         state = stepRailState(state, params, dt);
+    case "selector"
+        state = stepSelectorState(state, params, dt);
     otherwise
         state = stepParticleState(state, params, dt);
 end
@@ -81,6 +84,66 @@ if ~isfield(state, 'traj') || ~isnumeric(state.traj) || size(state.traj, 2) ~= 2
 end
 if ~isfield(state, 'stepCount')
     state.stepCount = 0;
+end
+end
+
+function state = stepSelectorState(state, params, dt)
+%STEPSELECTORSTATE  M4 速度选择器推进（交叉场）
+state = ensureSelectorState(state, params);
+
+rOld = [double(state.x); double(state.y)];
+vOld = [double(state.vx); double(state.vy)];
+
+bounded = logicalField(params, 'bounded', true);
+if ~bounded
+    [rNew, vNew] = propagateSelectorSegment(rOld, vOld, params, true, dt);
+    inField = true;
+    modeText = "selector_unbounded";
+else
+    box = geom.readBoundsFromParams(params);
+    [rNew, vNew, inField] = propagateSelectorBoundedChain(rOld, vOld, params, dt, box);
+    if inField
+        modeText = "selector_inside";
+    else
+        modeText = "selector_outside";
+    end
+end
+
+state.t = state.t + dt;
+state.modelType = "selector";
+state.x = rNew(1);
+state.y = rNew(2);
+state.vx = vNew(1);
+state.vy = vNew(2);
+state.traj(end+1, :) = [state.x, state.y];
+state.stepCount = state.stepCount + 1;
+state.inField = inField;
+state.mode = modeText;
+state = attachSelectorOutputs(state, params, inField);
+end
+
+function state = ensureSelectorState(state, params)
+%ENSURESELECTORSTATE  补齐速度选择器状态字段
+if ~isfield(state, 'x') || ~isfield(state, 'y') || ~isfield(state, 'vx') || ~isfield(state, 'vy')
+    state = engine.reset(state, params);
+end
+if ~isfield(state, 't')
+    state.t = 0.0;
+end
+if ~isfield(state, 'traj') || ~isnumeric(state.traj) || size(state.traj, 2) ~= 2
+    state.traj = [state.x, state.y];
+end
+if ~isfield(state, 'stepCount')
+    state.stepCount = 0;
+end
+if ~isfield(state, 'inField')
+    bounded = logicalField(params, 'bounded', true);
+    if bounded
+        box = geom.readBoundsFromParams(params);
+        state.inField = geom.isInsideBounds([state.x; state.y], box);
+    else
+        state.inField = true;
+    end
 end
 end
 
@@ -190,6 +253,24 @@ state.rail = struct( ...
 );
 end
 
+function state = attachSelectorOutputs(state, params, inField)
+%ATTACHSELECTOROUTPUTS  计算 M4 当前输出量（q/m 与受力分量）
+out = engine.helpers.selectorOutputs([double(state.vx); double(state.vy)], params, logical(inField));
+state.qOverM = out.qOverM;
+state.vSelect = out.vSelect;
+state.fElecX = out.fElecX;
+state.fElecY = out.fElecY;
+state.fMagX = out.fMagX;
+state.fMagY = out.fMagY;
+state.fTotalX = out.fTotalX;
+state.fTotalY = out.fTotalY;
+state.selector = struct( ...
+    'inField', logical(inField), ...
+    'qOverM', out.qOverM, ...
+    'vSelect', out.vSelect ...
+);
+end
+
 function inField = isRailInField(r, params)
 %ISRAILINFIELD  计算导体棒中心是否位于磁场有效区域
 if ~logicalField(params, 'bounded', false)
@@ -205,6 +286,8 @@ function modelType = resolveModelType(params)
 modelType = lower(strtrim(string(pickField(params, 'modelType', "particle"))));
 if startsWith(modelType, "rail")
     modelType = "rail";
+elseif startsWith(modelType, "selector")
+    modelType = "selector";
 else
     modelType = "particle";
 end
@@ -260,6 +343,56 @@ vNew = vNow;
 inField = inNow;
 end
 
+function [rNew, vNew, inField] = propagateSelectorBoundedChain(r0, v0, params, dt, box)
+%PROPAGATESELECTORBOUNDEDCHAIN  速度选择器有界单步分段推进
+remaining = double(dt);
+rNow = r0;
+vNow = v0;
+inNow = geom.isInsideBounds(rNow, box);
+
+maxCrossEvents = 8;
+crossCount = 0;
+
+while remaining > 1e-12 && crossCount < maxCrossEvents
+    [rTry, vTry] = propagateSelectorSegment(rNow, vNow, params, inNow, remaining);
+    inTry = geom.isInsideBounds(rTry, box);
+
+    if inTry == inNow
+        rNow = rTry;
+        vNow = vTry;
+        remaining = 0;
+        break;
+    end
+
+    tau = findSelectorCrossingTimeByBisection(rNow, vNow, params, remaining, inNow, box);
+    tau = max(0.0, min(tau, remaining));
+    if tau <= 1e-12
+        tau = min(remaining, max(1e-9, 1e-6 * remaining));
+    end
+
+    [rNow, vNow] = propagateSelectorSegment(rNow, vNow, params, inNow, tau);
+    remaining = remaining - tau;
+
+    inAfter = geom.isInsideBounds(rNow, box);
+    if inAfter == inNow
+        inNow = ~inNow;
+    else
+        inNow = inAfter;
+    end
+
+    crossCount = crossCount + 1;
+end
+
+if remaining > 1e-12
+    [rNow, vNow] = propagateSelectorSegment(rNow, vNow, params, inNow, remaining);
+    inNow = geom.isInsideBounds(rNow, box);
+end
+
+rNew = rNow;
+vNew = vNow;
+inField = inNow;
+end
+
 function tau = findCrossingTimeByBisection(r0, v0, omega, totalDt, inStart, box)
 %FINDCROSSINGTIMEBYBISECTION  二分定位首次跨界时刻
 lo = 0.0;
@@ -268,6 +401,26 @@ hi = double(totalDt);
 for k = 1:32
     mid = 0.5 * (lo + hi);
     [rMid, ~] = propagateSegment(r0, v0, omega, inStart, mid);
+    inMid = geom.isInsideBounds(rMid, box);
+
+    if inMid == inStart
+        lo = mid;
+    else
+        hi = mid;
+    end
+end
+
+tau = hi;
+end
+
+function tau = findSelectorCrossingTimeByBisection(r0, v0, params, totalDt, inStart, box)
+%FINDSELECTORCROSSINGTIMEBYBISECTION  二分定位速度选择器首次跨界时刻
+lo = 0.0;
+hi = double(totalDt);
+
+for k = 1:32
+    mid = 0.5 * (lo + hi);
+    [rMid, ~] = propagateSelectorSegment(r0, v0, params, inStart, mid);
     inMid = geom.isInsideBounds(rMid, box);
 
     if inMid == inStart
@@ -289,10 +442,28 @@ else
 end
 end
 
+function [rNew, vNew] = propagateSelectorSegment(rOld, vOld, params, inField, dt)
+%PROPAGATESELECTORSEGMENT  在指定区域属性下推进速度选择器一个子段
+if inField
+    [rNew, vNew] = propagateSelectorInField(rOld, vOld, params, dt);
+else
+    [rNew, vNew] = propagateFree(rOld, vOld, dt);
+end
+end
+
 function [rNew, vNew] = propagateFree(rOld, vOld, dt)
 %PROPAGATEFREE  磁场外推进：匀速直线
 rNew = rOld + double(dt) * vOld;
 vNew = vOld;
+end
+
+function [rNew, vNew] = propagateSelectorInField(rOld, vOld, params, dt)
+%PROPAGATESELECTORINFIELD  交叉场区域内推进（解析解）
+q = double(pickField(params, 'q', 0.0));
+m = max(double(pickField(params, 'm', 1.0)), 1e-12);
+Ey = double(pickField(params, 'Ey', 0.0));
+Bz = engine.helpers.signedBFromParams(params);
+[rNew, vNew] = physics.crossedFieldStep2D(rOld, vOld, q, m, Ey, Bz, dt);
 end
 
 function [rNew, vNew] = propagateInField(rOld, vOld, omega, dt)

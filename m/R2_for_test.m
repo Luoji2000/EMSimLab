@@ -116,6 +116,32 @@
                 comp.applyPayloadToUi(payload);
             end
         end
+
+        function setOutputs(comp, outputs)
+            %SETOUTPUTS  仅刷新输出区字段，避免运行时全量回写输入控件
+            if nargin < 2 || ~isstruct(outputs)
+                return;
+            end
+
+            payload = comp.Value;
+            if ~isstruct(payload) || isempty(fieldnames(payload))
+                payload = comp.defaultPayload();
+            end
+
+            keys = {'epsilonOut','currentOut','xOut','vOut','fMagOut','qHeatOut','pElecOut'};
+            for i = 1:numel(keys)
+                key = keys{i};
+                if isfield(outputs, key)
+                    payload.(key) = outputs.(key);
+                end
+            end
+
+            payload = comp.normalizePayload(payload, comp.Value);
+            comp.Value = payload;
+            if comp.isUiReady()
+                comp.applyOutputsToUi(payload);
+            end
+        end
     end
 
     methods (Access = protected)
@@ -563,13 +589,7 @@
                 comp.ShowCurrentCheck.Value = payload.showCurrent;
                 comp.ShowGridCheck.Value = payload.showGrid;
                 comp.ShowBMarksCheck.Value = payload.showBMarks;
-
-                comp.epsilonField.Value = payload.epsilonOut;
-                comp.IField.Value = payload.currentOut;
-                comp.xtField.Value = payload.xOut;
-                comp.vtField.Value = payload.vOut;
-                comp.FmagField.Value = payload.fMagOut;
-                comp.pElecField.Value = payload.qHeatOut;
+                comp.applyOutputsToUi(payload);
 
                 comp.updateBoundsEnable(payload.bounded);
                 comp.updateDriveForceEnable(payload.driveEnabled);
@@ -579,6 +599,16 @@
                 rethrow(err);
             end
             comp.IsApplyingPayload = false;
+        end
+
+        function applyOutputsToUi(comp, payload)
+            %APPLYOUTPUTSTOUI  仅把输出字段写到输出控件
+            comp.epsilonField.Value = payload.epsilonOut;
+            comp.IField.Value = payload.currentOut;
+            comp.xtField.Value = payload.xOut;
+            comp.vtField.Value = payload.vOut;
+            comp.FmagField.Value = payload.fMagOut;
+            comp.pElecField.Value = payload.qHeatOut;
         end
 
         function updateBoundsEnable(comp, isOn)
@@ -648,6 +678,12 @@
                 % 从“无外力”切到“有外力”时，若 Fdrive 仍为 0，则给一个可观察默认值
                 if ~prevDrive && abs(payload.Fdrive) <= 1e-12
                     payload.Fdrive = 1.0;
+                end
+                % 从“无外力”切到“有外力”时，若速度仍是默认值（常见为 1 m/s），
+                % 会恰好落在稳态速度 v_inf=Fdrive/k，导致曲线看起来“始终直线”。
+                % 这里仅在“首次切换且仍是默认速度”时自动回落到 0，便于观察动态过程。
+                if ~prevDrive && abs(payload.v0 - base.v0) <= 1e-12
+                    payload.v0 = 0.0;
                 end
             else
                 payload.templateId = "R1";

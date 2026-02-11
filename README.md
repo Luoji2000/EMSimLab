@@ -44,7 +44,7 @@ boot.openReleaseApp()
 3. 已补齐 `docs`，包含与 ElectroSim 同规格的中文技术文档。
 4. 已新增 `.gitattributes`，将 `.mlapp` 视为二进制。
 
-## 当前进度（M1 + R）
+## 当前进度（M1 + M4 + R + M5）
 
 1. 参数链路已打通：模板切换、参数回写、统一校验、状态重置与渲染刷新可闭环工作。
 2. 运动模型已接通：
@@ -64,7 +64,7 @@ boot.openReleaseApp()
    - `tests/smoke_m1_bounded_chain.m`
 6. R 系列最小闭环已接入（统一模板 + 场景参数）：
    - 模板注册采用统一 `R`，并兼容 `R1/R2/R3/R4 -> R` 的查询映射；
-   - 参数组件按模板动态切换（`M* -> M1_for_test`, `R* -> R2_for_test`）；
+   - 参数组件按模板动态切换（`M1 -> M1_for_test`, `M4 -> M4_for_test`, `M5 -> M5_for_test`, `R* -> R2_for_test`）；
    - 引擎 `rail` 分支支持开路输出 `ε=BLv`、闭路电流与安培力、以及有界磁场判定；
    - 场景已接入导轨/滑杆/电阻（矩形符号）与电流/外力/安培力箭头；
    - 速度箭头在导轨模型中上移到上导轨外侧，避免与受力箭头重叠。
@@ -82,6 +82,16 @@ boot.openReleaseApp()
    - `control.onTick` 改为单帧子步进推进（按角速度/步长自适应拆分）；
    - `viz.renderScene` 改为 `drawnow nocallbacks`，移除 `limitrate` 限帧顿感；
    - 磁场标记加入缓存键机制，减少重复点阵重建导致的渲染抖动。
+10. 运行态性能优化（A+B）已接入：
+   - 日志面板改为“缓冲 + 节流刷新”：隐藏日志页时不频繁重绘，切到日志页再刷新；
+   - `logger.logEvent` 在播放中抑制 `信息/调试` 级别命令行输出，保留 `警告/错误`；
+   - 新增 `ui.applyOutputs`，运行中只增量更新输出区，避免每帧全量 `setPayload`。
+11. M4 速度选择器最小闭环已接入：
+   - 模板定义新增 `src/+templates/+defs/M4.m`，参数 schema 新增 `selector`；
+   - 引擎新增交叉场解析推进 `physics.crossedFieldStep2D`，并接入 `engine.step/reset` 的 `selector` 分支；
+   - 场景渲染新增速度选择器极板与电场方向叠层，支持电场力/磁场力箭头开关；
+   - 参数组件新增 `m/M4_for_test.m`（统一 payload 接口）；
+   - 新增烟雾测试 `tests/smoke_m4_minimal_loop.m`。
 
 ## UI 协作流程（约定）
 

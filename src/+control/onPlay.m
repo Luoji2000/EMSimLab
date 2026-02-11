@@ -35,7 +35,7 @@ stepDt = 0.05;
 % 1) 推进一步
 app.State = engine.step(app.State, app.Params, stepDt);
 app.Params = control.mergeRailOutputs(app.Params, app.State);
-ui.applyPayload(app, app.Params);
+ui.applyOutputs(app, extractOutputFields(app.Params));
 
 % 2) 刷新渲染
 ui.render(app, app.State);
@@ -46,4 +46,20 @@ if isfield(app.State, 't')
     tNow = app.State.t;
 end
 logger.logEvent(app, '调试', '单步推进（回退模式）', struct('dt', stepDt, 't', tNow));
+end
+
+function out = extractOutputFields(paramsIn)
+%EXTRACTOUTPUTFIELDS  从完整参数中提取输出区字段（用于增量 UI 刷新）
+out = struct();
+if ~isstruct(paramsIn)
+    return;
+end
+
+keys = ["epsilonOut","currentOut","xOut","vOut","fMagOut","qHeatOut","pElecOut","qOverMOut"];
+for i = 1:numel(keys)
+    key = char(keys(i));
+    if isfield(paramsIn, key)
+        out.(key) = paramsIn.(key);
+    end
+end
 end

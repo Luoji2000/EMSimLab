@@ -21,7 +21,11 @@ modelType = resolveModelType(params, state);
 % 仅在导轨模型下处理
 if modelType ~= "rail"
     [handles, cache] = ensurePlotHandles(app);
-    cache = clearHistoryAndShowMessage(handles, cache, "当前模板暂不绘制导轨曲线");
+    msg = "当前模板暂不绘制导轨曲线";
+    if modelType == "selector"
+        msg = "M4 曲线待接入（可后续启用 y(t)/F_y(t)）";
+    end
+    cache = clearHistoryAndShowMessage(handles, cache, msg);
     writePlotCache(app, cache);
     return;
 end
@@ -197,19 +201,28 @@ if isempty(cache.t)
     return;
 end
 
-set(handles.lineV, 'XData', cache.t, 'YData', cache.v, 'Visible', 'on');
-set(handles.lineI, 'XData', cache.t, 'YData', cache.i, 'Visible', 'on');
-set(handles.lineF, 'XData', cache.t, 'YData', cache.f, 'Visible', 'on');
+% 曲线绘制点限流：历史可保留更多，但每帧只绘制尾部窗口，减少大数组写入开销
+maxDrawPoints = 1600;
+[tDraw, vDraw, iDraw, fDraw] = tailHistory(cache.t, cache.v, cache.i, cache.f, maxDrawPoints);
+
+set(handles.lineV, 'XData', tDraw, 'YData', vDraw, 'Visible', 'on');
+set(handles.lineI, 'XData', tDraw, 'YData', iDraw, 'Visible', 'on');
+set(handles.lineF, 'XData', tDraw, 'YData', fDraw, 'Visible', 'on');
 
 % 三图统一时间窗
-xMin = cache.t(1);
-xMax = cache.t(end);
+xMin = tDraw(1);
+xMax = tDraw(end);
 if xMax <= xMin
     xMax = xMin + 1e-3;
 end
-set(handles.axV, 'XLim', [xMin, xMax]);
-set(handles.axI, 'XLim', [xMin, xMax]);
-set(handles.axF, 'XLim', [xMin, xMax]);
+xLim = [xMin, xMax];
+if ~(isnumeric(cache.lastXLim) && numel(cache.lastXLim) == 2 && all(isfinite(cache.lastXLim)) ...
+        && all(abs(cache.lastXLim - xLim) <= 1e-12))
+    set(handles.axV, 'XLim', xLim);
+    set(handles.axI, 'XLim', xLim);
+    set(handles.axF, 'XLim', xLim);
+    cache.lastXLim = xLim;
+end
 end
 
 function cache = clearHistoryAndShowMessage(handles, cache, messageText)
@@ -220,6 +233,7 @@ cache.i = [];
 cache.f = [];
 cache.lastT = NaN;
 cache.lastStep = NaN;
+cache.lastXLim = [NaN, NaN];
 
 set(handles.lineV, 'XData', NaN, 'YData', NaN, 'Visible', 'off');
 set(handles.lineI, 'XData', NaN, 'YData', NaN, 'Visible', 'off');
@@ -247,8 +261,25 @@ cache = struct( ...
     'i', zeros(0, 1), ...
     'f', zeros(0, 1), ...
     'lastT', NaN, ...
-    'lastStep', NaN ...
+    'lastStep', NaN, ...
+    'lastXLim', [NaN, NaN] ...
 );
+end
+
+function [tOut, vOut, iOut, fOut] = tailHistory(t, v, i, f, maxPoints)
+%TAILHISTORY  仅取历史尾部窗口用于绘制
+if numel(t) <= maxPoints
+    tOut = t;
+    vOut = v;
+    iOut = i;
+    fOut = f;
+    return;
+end
+idx = (numel(t)-maxPoints+1):numel(t);
+tOut = t(idx);
+vOut = v(idx);
+iOut = i(idx);
+fOut = f(idx);
 end
 
 function cache = readPlotCache(app)

@@ -13,7 +13,9 @@ end
 p = pIn;
 tpl = upper(strtrim(string(templateId)));
 
-if tpl == "M5"
+if tpl == "M4"
+    p = applySelectorPreset(p);
+elseif tpl == "M5"
     p = applyMassSpecPreset(p);
 elseif startsWith(tpl, "R")
     p = applyRailPreset(p);
@@ -74,6 +76,47 @@ p.showBMarks = true;
 p.autoFollow = false;
 p.followSpan = 6.0;
 p.maxSpan = 20.0;
+end
+
+function p = applySelectorPreset(p)
+%APPLYSELECTORPRESET  M4 速度选择器场景预设
+%
+% 场景语义
+%   1) 交叉场区域固定为有界矩形，便于展示“进场-出场”链条
+%   2) 默认入射方向沿 +x，电场沿 +y，磁场方向可切换
+%   3) 提供速度选择条件参考值：v_select = Ey / Bz
+
+p.modelType = "selector";
+p.templateId = "M4";
+
+p.q = 1.0;
+p.m = 1.0;
+p.B = 1.0;
+p.Bdir = "out";
+p.Ey = 1.0;
+p.v0 = 1.2;
+p.thetaDeg = 0.0;
+p.x0 = -1.2;
+p.y0 = 0.0;
+
+p.bounded = true;
+p.xMin = -1.0;
+p.xMax = 1.0;
+p.plateGap = 1.2;
+p.yMin = -0.5 * p.plateGap;
+p.yMax = 0.5 * p.plateGap;
+
+p.showTrail = true;
+p.showV = true;
+p.showF = false;
+p.showGrid = true;
+p.showBMarks = true;
+p.showEField = true;
+p.showFElec = false;
+p.showFMag = false;
+p.autoFollow = false;
+p.followSpan = 6.0;
+p.maxSpan = 30.0;
 end
 
 function v = pickField(s, name, fallback)

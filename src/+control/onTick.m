@@ -25,17 +25,29 @@ end
 
 try
     frameDt = resolveFrameDt(app);
+    tickTic = tic;
 
     % 1) 物理推进（子步进）
     %    每个渲染帧内自动拆分成多个物理小步，减少轨迹“跳点感”。
+    stepTic = tic;
     [app.State, subSteps, subDt] = advanceWithSubsteps(app.State, app.Params, frameDt);
+    stepMs = toc(stepTic) * 1000.0;
+
+    % 2) 输出区增量回写（只写输出字段，避免全量参数回写）
+    outputTic = tic;
     app.Params = control.mergeRailOutputs(app.Params, app.State);
-    ui.applyPayload(app, app.Params);
+    ui.applyOutputs(app, extractOutputFields(app.Params));
+    outputMs = toc(outputTic) * 1000.0;
 
-    % 2) 刷新渲染
+    % 3) 刷新渲染
+    renderTic = tic;
     ui.render(app, app.State);
+    renderMs = toc(renderTic) * 1000.0;
 
-    % 3) 日志节流：每 10 帧记录一次，减少日志压力
+    tickMs = toc(tickTic) * 1000.0;
+    [app.State, perfSnapshot] = updatePerfStats(app.State, stepMs, outputMs, renderMs, tickMs, frameDt);
+
+    % 4) 日志节流：每 10 帧记录一次推进信息
     if shouldLogTick(app.State)
         tNow = NaN;
         if isfield(app.State, 't')
@@ -44,12 +56,80 @@ try
         payload = buildTickLogPayload(app, frameDt, subDt, subSteps, tNow);
         logger.logEvent(app, '调试', '连续播放推进', payload);
     end
+
+    % 5) 性能采样日志：低频输出“谁最耗时”
+    if shouldLogPerf(app.State)
+        perfPayload = buildPerfLogPayload(frameDt, subDt, subSteps, perfSnapshot);
+        logger.logEvent(app, '调试', '性能采样', perfPayload);
+    end
 catch err
     logger.logEvent(app, '错误', '连续播放失败', struct('reason', err.message));
     if ismethod(app, 'pausePlayback')
         app.pausePlayback();
     end
 end
+
+function out = extractOutputFields(paramsIn)
+%EXTRACTOUTPUTFIELDS  从完整参数中提取输出区字段（用于增量 UI 刷新）
+out = struct();
+if ~isstruct(paramsIn)
+    return;
+end
+
+keys = ["epsilonOut","currentOut","xOut","vOut","fMagOut","qHeatOut","pElecOut","qOverMOut"];
+for i = 1:numel(keys)
+    key = char(keys(i));
+    if isfield(paramsIn, key)
+        out.(key) = paramsIn.(key);
+    end
+end
+end
+end
+
+function [stateOut, perf] = updatePerfStats(stateIn, stepMs, outputMs, renderMs, tickMs, frameDt)
+%UPDATEPERFSTATS  更新运行时性能统计（EMA），并返回本帧快照
+stateOut = stateIn;
+
+alpha = 0.20;
+if ~isstruct(stateOut)
+    stateOut = struct();
+end
+if ~isfield(stateOut, 'perfEmaStepMs')
+    stateOut.perfEmaStepMs = stepMs;
+    stateOut.perfEmaOutputMs = outputMs;
+    stateOut.perfEmaRenderMs = renderMs;
+    stateOut.perfEmaTickMs = tickMs;
+else
+    stateOut.perfEmaStepMs = alpha * stepMs + (1 - alpha) * double(stateOut.perfEmaStepMs);
+    stateOut.perfEmaOutputMs = alpha * outputMs + (1 - alpha) * double(stateOut.perfEmaOutputMs);
+    stateOut.perfEmaRenderMs = alpha * renderMs + (1 - alpha) * double(stateOut.perfEmaRenderMs);
+    stateOut.perfEmaTickMs = alpha * tickMs + (1 - alpha) * double(stateOut.perfEmaTickMs);
+end
+
+phaseMs = [stepMs, outputMs, renderMs];
+phaseName = ["物理推进","输出回写","渲染"];
+[mainCostMs, idx] = max(phaseMs);
+mainCost = phaseName(idx);
+
+budgetMs = frameDt * 1000.0;
+headroomMs = budgetMs - tickMs;
+fpsEst = 1000.0 / max(tickMs, 1e-6);
+
+perf = struct( ...
+    'step_ms', stepMs, ...
+    'output_ms', outputMs, ...
+    'render_ms', renderMs, ...
+    'tick_ms', tickMs, ...
+    'ema_step_ms', double(stateOut.perfEmaStepMs), ...
+    'ema_output_ms', double(stateOut.perfEmaOutputMs), ...
+    'ema_render_ms', double(stateOut.perfEmaRenderMs), ...
+    'ema_tick_ms', double(stateOut.perfEmaTickMs), ...
+    'frame_budget_ms', budgetMs, ...
+    'headroom_ms', headroomMs, ...
+    'fps_est', fpsEst, ...
+    'main_cost', mainCost, ...
+    'main_cost_ms', mainCostMs ...
+);
 end
 
 function payload = buildTickLogPayload(app, frameDt, subDt, subSteps, tNow)
@@ -80,6 +160,28 @@ payload.current = double(pickField(state, 'current', 0.0));
 payload.fmag = double(pickField(state, 'fMag', 0.0));
 payload.q_heat = double(pickField(state, 'qHeat', 0.0));
 payload.in_field = logicalField(state, 'inField', true);
+end
+
+function payload = buildPerfLogPayload(frameDt, subDt, subSteps, perf)
+%BUILDPERFLOGPAYLOAD  生成性能采样日志负载
+payload = struct( ...
+    'dt', frameDt, ...
+    'sub_dt', subDt, ...
+    'sub_steps', subSteps, ...
+    'step_ms', perf.step_ms, ...
+    'output_ms', perf.output_ms, ...
+    'render_ms', perf.render_ms, ...
+    'tick_ms', perf.tick_ms, ...
+    'ema_step_ms', perf.ema_step_ms, ...
+    'ema_output_ms', perf.ema_output_ms, ...
+    'ema_render_ms', perf.ema_render_ms, ...
+    'ema_tick_ms', perf.ema_tick_ms, ...
+    'frame_budget_ms', perf.frame_budget_ms, ...
+    'headroom_ms', perf.headroom_ms, ...
+    'fps_est', perf.fps_est, ...
+    'main_cost', perf.main_cost, ...
+    'main_cost_ms', perf.main_cost_ms ...
+);
 end
 
 function [stateOut, subSteps, subDt] = advanceWithSubsteps(stateIn, params, frameDt)
@@ -204,6 +306,19 @@ function tf = shouldLogTick(state)
 %   - 无 stepCount：默认记录
 if isstruct(state) && isfield(state, 'stepCount')
     tf = mod(double(state.stepCount), 10) == 0;
+else
+    tf = true;
+end
+end
+
+function tf = shouldLogPerf(state)
+%SHOULDLOGPERF  性能采样日志节流判定
+%
+% 规则
+%   - 若有 stepCount：每 30 帧记录一次
+%   - 无 stepCount：默认记录
+if isstruct(state) && isfield(state, 'stepCount')
+    tf = mod(double(state.stepCount), 30) == 0;
 else
     tf = true;
 end

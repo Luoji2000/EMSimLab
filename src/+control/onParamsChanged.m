@@ -52,7 +52,7 @@ ui.applyPayload(app, p);
 % 5) 当前骨架采用“改参即重置”策略，保证行为确定性，便于调试
 app.State = engine.reset(app.State, app.Params);
 app.Params = control.mergeRailOutputs(app.Params, app.State);
-ui.applyPayload(app, app.Params);
+ui.applyOutputs(app, extractOutputFields(app.Params));
 ui.render(app, app.State);
 
 % 5.1) 磁场标记开关日志（按你的调试诉求单独记录）
@@ -64,6 +64,22 @@ if strlength(changedSummary) == 0
     logger.logEvent(app, '调试', '参数已更新', struct('changed_summary', '无变化'));
 else
     logger.logEvent(app, '调试', '参数已更新', struct('changed_summary', changedSummary));
+end
+
+function out = extractOutputFields(paramsIn)
+%EXTRACTOUTPUTFIELDS  从完整参数中提取输出区字段（用于增量 UI 刷新）
+out = struct();
+if ~isstruct(paramsIn)
+    return;
+end
+
+keys = ["epsilonOut","currentOut","xOut","vOut","fMagOut","qHeatOut","pElecOut","qOverMOut"];
+for i = 1:numel(keys)
+    key = char(keys(i));
+    if isfield(paramsIn, key)
+        out.(key) = paramsIn.(key);
+    end
+end
 end
 end
 

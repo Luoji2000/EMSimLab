@@ -1,5 +1,19 @@
 ﻿# 更新日志
 
+## 2026-02-11
+- 新增：M4 模板接入（`src/+templates/+defs/M4.m` + `schema_get("selector")`）。
+- 新增：参数组件 `m/M4_for_test.m`，支持 `Value/getPayload/setPayload/PayloadChanged` 统一接口。
+- 新增：交叉场解析推进 `src/+physics/crossedFieldStep2D.m`（漂移+旋转+解析位移积分）。
+- 重构：`engine.reset/engine.step` 增加 `selector` 分支，支持 M4 的有界进出场链路。
+- 新增：`engine.helpers.selectorOutputs`，统一计算 `q/m` 与电场力/磁场力/合力分量。
+- 新增：`viz.renderScene` 速度选择器叠层（极板 + 电场箭头）与受力箭头分层渲染。
+- 测试：新增 `tests/smoke_m4_minimal_loop.m`。
+- 优化（A）：日志面板改为“缓冲 + 节流刷新”，隐藏日志页时不频繁重绘；切换到日志页时立即刷新。
+- 优化（A）：`logger.logEvent` 在播放中抑制 `信息/调试` 级别 `fprintf`，保留 `警告/错误` 命令行输出。
+- 新增（B）：`src/+ui/applyOutputs.m`，运行态支持输出区增量回写，避免每帧全量 `setPayload`。
+- 优化（B）：`control.onTick`、`control.onReset`、`control.onParamsChanged`、`control.onPlay`（回退链路）切换为 `ui.applyOutputs`。
+- 新增：`m/R2_for_test.m` 与 `m/M5_for_test.m` 增加 `setOutputs` 接口，仅刷新输出控件。
+
 ## 2026-02-10
 - 新增：M5 质谱仪模板第一版接入（`src/+templates/+defs/M5.m`），并加入模板注册表与模板预设链路。
 - 新增：参数组件 `m/M5_for_test.m`，支持统一 payload 接口与 `q/m = 2*pi/(B*T)` 输出。

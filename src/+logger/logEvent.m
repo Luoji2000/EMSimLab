@@ -37,8 +37,21 @@ if ~isempty(app) && isa(app, 'handle') && isvalidHandle(app) && ismethod(app, 'a
     end
 end
 
-% 保留命令行输出，便于无界面调试
-fprintf('%s\n', line);
+% 命令行输出策略：
+%   - 默认输出，便于无界面调试
+%   - 若 App 提供 shouldEchoLogToConsole(level) 策略，则按策略决定
+shouldEcho = true;
+if ~isempty(app) && isa(app, 'handle') && isvalidHandle(app) && ismethod(app, 'shouldEchoLogToConsole')
+    try
+        shouldEcho = logical(app.shouldEchoLogToConsole(entry.level));
+    catch
+        shouldEcho = true;
+    end
+end
+
+if shouldEcho
+    fprintf('%s\n', line);
+end
 end
 
 function label = normalizeLevel(levelRaw)
@@ -251,6 +264,32 @@ switch token
         label = "vy";
     case "mode"
         label = "模式";
+    case "step_ms"
+        label = "物理推进耗时ms";
+    case "output_ms"
+        label = "输出回写耗时ms";
+    case "render_ms"
+        label = "渲染耗时ms";
+    case "tick_ms"
+        label = "单帧总耗时ms";
+    case "ema_step_ms"
+        label = "物理推进均值ms";
+    case "ema_output_ms"
+        label = "输出回写均值ms";
+    case "ema_render_ms"
+        label = "渲染均值ms";
+    case "ema_tick_ms"
+        label = "单帧总耗时均值ms";
+    case "frame_budget_ms"
+        label = "帧预算ms";
+    case "headroom_ms"
+        label = "帧余量ms";
+    case "fps_est"
+        label = "估算FPS";
+    case "main_cost"
+        label = "主耗时环节";
+    case "main_cost_ms"
+        label = "主耗时ms";
     case "model_type"
         label = "模型";
     case "wall_x"
@@ -259,6 +298,24 @@ switch token
         label = "小孔中心y";
     case "slit_height"
         label = "小孔高度";
+    case "show_efield"
+        label = "显示电场箭头";
+    case "ey"
+        label = "Ey";
+    case "y_top"
+        label = "上极板y";
+    case "y_bottom"
+        label = "下极板y";
+    case "show_felec"
+        label = "电场力箭头开关";
+    case "show_fmag"
+        label = "磁场力箭头开关";
+    case "f_total"
+        label = "合力模";
+    case "f_elec"
+        label = "电场力模";
+    case "f_mag"
+        label = "磁场力模";
     case "rail_visible"
         label = "导轨可见";
     case "rod_visible"
@@ -285,6 +342,10 @@ switch token
         label = "子步长";
     case "sub_steps"
         label = "子步数";
+    case "x_min"
+        label = "x_min";
+    case "x_max"
+        label = "x_max";
     case "x_out"
         label = "输出x_t";
     case "v_out"
@@ -311,12 +372,16 @@ switch token
         label = "存在旧组件";
     case "m1_class_exists"
         label = "M1类可用";
+    case "m4_class_exists"
+        label = "M4类可用";
     case "r2_class_exists"
         label = "R2类可用";
     case "m5_class_exists"
         label = "M5类可用";
     case "m1_path"
         label = "M1类路径";
+    case "m4_path"
+        label = "M4类路径";
     case "r2_path"
         label = "R2类路径";
     case "m5_path"

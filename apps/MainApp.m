@@ -55,6 +55,9 @@
         ParamChangedListener = event.listener.empty
         LogLines            string = strings(0, 1)
         MaxLogLines         (1,1) double = 500
+        LogUiFlushIntervalSec (1,1) double = 0.25
+        LastLogUiFlushAt    (1,1) double = -inf
+        PendingLogUiDirty   (1,1) logical = false
         PlaybackTimer       = []
         % 播放器渲染节拍（秒）：默认 30 FPS，视觉更平滑
         PlaybackPeriod      (1,1) double = 1/30
@@ -383,9 +386,11 @@
                 'old_class', oldClass, ...
                 'has_old_component', hasOldComponent, ...
                 'm1_class_exists', exist('M1_for_test', 'class') == 8, ...
+                'm4_class_exists', exist('M4_for_test', 'class') == 8, ...
                 'r2_class_exists', exist('R2_for_test', 'class') == 8, ...
                 'm5_class_exists', exist('M5_for_test', 'class') == 8, ...
                 'm1_path', string(which('M1_for_test')), ...
+                'm4_path', string(which('M4_for_test')), ...
                 'r2_path', string(which('R2_for_test')), ...
                 'm5_path', string(which('M5_for_test')) ...
             ));
@@ -458,6 +463,10 @@
                 className = "M5_for_test";
                 return;
             end
+            if token == "M4"
+                className = "M4_for_test";
+                return;
+            end
 
             if startsWith(token, "R") || engineToken == "rail"
                 className = "R2_for_test";
@@ -494,6 +503,14 @@
             app.SpeedMinusButton.ButtonPushedFcn = @(~,~)app.bumpSpeed(-0.5);
             app.SpeedPlusButton.ButtonPushedFcn = @(~,~)app.bumpSpeed(0.5);
             app.LogButton.ButtonPushedFcn = @(~,~)app.onExportLog();
+            app.RightTabs.SelectionChangedFcn = @(~,~)app.onRightTabsSelectionChanged();
+        end
+
+        function onRightTabsSelectionChanged(app)
+            %ONRIGHTTABSSELECTIONCHANGED  切换到日志页时立即刷新一次缓存日志
+            if app.isLogTabSelected()
+                app.flushLogTextArea(true);
+            end
         end
 
         function onSpeedSliderChanged(app)
@@ -605,9 +622,58 @@
                 app.LogLines = app.LogLines(end-app.MaxLogLines+1:end);
             end
 
-            if isprop(app, 'LogTextArea') && isgraphics(app.LogTextArea)
-                app.LogTextArea.Value = cellstr(app.LogLines);
+            app.PendingLogUiDirty = true;
+            app.flushLogTextArea(app.shouldForceLogUiFlush(line));
+        end
+
+        function tf = shouldForceLogUiFlush(~, line)
+            %SHOULDFORCELOGUIFLUSH  错误/警告日志立即刷新到日志面板
+            textLine = string(line);
+            tf = contains(textLine, "[错误]") || contains(textLine, "[警告]");
+        end
+
+        function tf = isLogTabSelected(app)
+            %ISLOGTABSELECTED  当前右侧是否位于日志标签页
+            tf = false;
+            if ~(isgraphics(app.RightTabs) && isgraphics(app.LogTab))
+                return;
             end
+            try
+                tf = isequal(app.RightTabs.SelectedTab, app.LogTab);
+            catch
+                tf = false;
+            end
+        end
+
+        function flushLogTextArea(app, forceFlush)
+            %FLUSHLOGTEXTAREA  按策略将日志缓冲区刷新到 TextArea
+            if nargin < 2
+                forceFlush = false;
+            end
+
+            if ~app.PendingLogUiDirty
+                return;
+            end
+            if ~(isprop(app, 'LogTextArea') && isgraphics(app.LogTextArea))
+                app.PendingLogUiDirty = false;
+                return;
+            end
+
+            nowSec = posixtime(datetime('now'));
+            if ~forceFlush
+                % 仅在日志页可见时进行常规刷新，减少隐藏页无效重绘
+                if ~app.isLogTabSelected()
+                    return;
+                end
+                if isfinite(app.LastLogUiFlushAt) ...
+                        && (nowSec - app.LastLogUiFlushAt) < app.LogUiFlushIntervalSec
+                    return;
+                end
+            end
+
+            app.LogTextArea.Value = cellstr(app.LogLines);
+            app.LastLogUiFlushAt = nowSec;
+            app.PendingLogUiDirty = false;
         end
 
         function onExportLog(app)
@@ -646,19 +712,37 @@
             %   1) 使用 fixedSpacing，保证播放节奏稳定
             %   2) BusyMode=drop，防止渲染慢导致回调堆积
             %   3) TimerFcn 只做一步推进，主逻辑仍在 control.onTick
+            safePeriod = app.normalizePlaybackPeriod(app.PlaybackPeriod);
+            app.PlaybackPeriod = safePeriod;
+
             if ~isempty(app.PlaybackTimer) && isvalid(app.PlaybackTimer)
-                if abs(app.PlaybackTimer.Period - app.PlaybackPeriod) > 1e-9
-                    app.PlaybackTimer.Period = app.PlaybackPeriod;
+                if abs(app.PlaybackTimer.Period - safePeriod) > 1e-9
+                    app.PlaybackTimer.Period = safePeriod;
                 end
                 return;
             end
 
             app.PlaybackTimer = timer( ...
                 'ExecutionMode', 'fixedSpacing', ...
-                'Period', app.PlaybackPeriod, ...
+                'Period', safePeriod, ...
                 'BusyMode', 'drop', ...
                 'TimerFcn', @(~,~)control.onTick(app), ...
                 'ErrorFcn', @(~,evt)app.onPlaybackTimerError(evt));
+        end
+
+        function dt = normalizePlaybackPeriod(~, dtRaw)
+            %NORMALIZEPLAYBACKPERIOD  将播放周期量化到毫秒，避免 timer 精度警告
+            %
+            % 规则
+            %   1) 非法值回退到 1/30
+            %   2) 最小周期限制为 1ms（timer 平台精度下限）
+            %   3) 最终按 1ms 网格量化，避免“亚毫秒精度被忽略”警告
+            dt = double(dtRaw);
+            if ~isfinite(dt) || dt <= 0
+                dt = 1/30;
+            end
+            dt = max(0.001, dt);
+            dt = round(dt * 1000) / 1000;
         end
 
         function onPlaybackTimerError(app, evt)
@@ -704,6 +788,26 @@
             app.appendLogLineImpl(line);
         end
 
+        function tf = shouldEchoLogToConsole(app, levelLabel)
+            %SHOULDECHOLOGTOCONSOLE  控制日志是否需要打印到 MATLAB 命令行
+            %
+            % 规则
+            %   1) 错误/警告始终输出命令行
+            %   2) 播放过程中压制“信息/调试”命令行输出，减少 IO 抖动
+            %   3) 非播放态保留命令行输出，便于调试
+            level = string(levelLabel);
+            if any(level == ["错误","警告"])
+                tf = true;
+                return;
+            end
+
+            if app.IsPlaying
+                tf = false;
+            else
+                tf = true;
+            end
+        end
+
         function startPlayback(app)
             %STARTPLAYBACK  启动连续播放（若已播放则忽略）
             if app.IsPlaying
@@ -746,7 +850,7 @@
 
         function dt = getPlaybackPeriod(app)
             %GETPLAYBACKPERIOD  获取连续播放单帧步长（秒）
-            dt = app.PlaybackPeriod;
+            dt = app.normalizePlaybackPeriod(app.PlaybackPeriod);
         end
 
         % 构造函数

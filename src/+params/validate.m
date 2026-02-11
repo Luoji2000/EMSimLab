@@ -43,11 +43,16 @@ for i = 1:numel(schema.defs)
     p.(fieldName) = v;
 end
 
-% 1.5) M1 粒子模板的单位/粒子联动规则
+% 1.5) 粒子类模板（M1/M4/M5）的单位/粒子联动规则
 %      - 选择电子/质子时：强制 unitMode=particle，并覆盖 q/m 为预设值
-if isfield(schema, "key") && strcmpi(string(schema.key), "particle")
+if isfield(schema, "key") && any(strcmpi(string(schema.key), ["particle","selector"]))
     p = applyParticleUnitRules(p);
-    p = applyMassSpecRules(p);
+    if strcmpi(string(schema.key), "particle")
+        p = applyMassSpecRules(p);
+    end
+    if strcmpi(string(schema.key), "selector")
+        p = applySelectorRules(p);
+    end
 end
 
 % 2) particle 模板派生量：由 (v0, thetaDeg) 反推 (vx0, vy0)
@@ -139,6 +144,33 @@ if hasField(p, "slitHeight")
     p.slitHeight = max(toDouble(p.slitHeight, 0.40), 0.05);
 else
     p.slitHeight = 0.40;
+end
+end
+
+function p = applySelectorRules(p)
+%APPLYSELECTORRULES  M4 速度选择器模板参数约束
+%
+% 约束目标
+%   1) M4 默认进入 selector 模式
+%   2) 交叉场区域默认保持有界，便于“进入/离开场区”教学演示
+%   3) qOverMOut 作为输出字段，与当前 q/m 同步
+if hasField(p, "templateId") && strcmpi(strtrim(string(p.templateId)), "M4")
+    p.modelType = "selector";
+    if hasField(p, "bounded")
+        p.bounded = true;
+    end
+end
+
+if hasField(p, "qOverMOut") && hasField(p, "q") && hasField(p, "m")
+    mSafe = max(toDouble(p.m, 1.0), 1e-12);
+    p.qOverMOut = toDouble(p.q, 0.0) / mSafe;
+end
+
+if hasField(p, "plateGap")
+    p.plateGap = max(toDouble(p.plateGap, 1.2), 0.05);
+end
+if hasField(p, "Ey")
+    p.Ey = toDouble(p.Ey, 1.0);
 end
 end
 

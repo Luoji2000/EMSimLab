@@ -86,6 +86,28 @@ classdef M5_for_test < matlab.ui.componentcontainer.ComponentContainer
                 comp.applyPayloadToUi(payload);
             end
         end
+
+        function setOutputs(comp, outputs)
+            %SETOUTPUTS  仅刷新输出区字段，避免运行中全量写回
+            if nargin < 2 || ~isstruct(outputs)
+                return;
+            end
+
+            payload = comp.Value;
+            if ~isstruct(payload) || isempty(fieldnames(payload))
+                payload = comp.defaultPayload();
+            end
+
+            if isfield(outputs, 'qOverMOut')
+                payload.qOverMOut = outputs.qOverMOut;
+            end
+
+            payload = comp.normalizePayload(payload, comp.Value);
+            comp.Value = payload;
+            if comp.isUiReady()
+                comp.applyOutputsToUi(payload);
+            end
+        end
     end
 
     methods (Access = protected)
@@ -413,13 +435,18 @@ classdef M5_for_test < matlab.ui.componentcontainer.ComponentContainer
                 comp.ShowGridCheck.Value = payload.showGrid;
                 comp.ShowBMarksCheck.Value = payload.showBMarks;
 
-                comp.qmField.Value = payload.qOverMOut;
+                comp.applyOutputsToUi(payload);
                 comp.updateBoundsEnable(payload.bounded);
             catch err
                 comp.IsApplyingPayload = false;
                 rethrow(err);
             end
             comp.IsApplyingPayload = false;
+        end
+
+        function applyOutputsToUi(comp, payload)
+            %APPLYOUTPUTSTOUI  仅将输出字段写到输出控件
+            comp.qmField.Value = payload.qOverMOut;
         end
 
         function updateBoundsEnable(comp, boundedOn)

@@ -1,5 +1,5 @@
 function p = mergeRailOutputs(p, state)
-%MERGERAILOUTPUTS  将 R 系列状态输出写回参数结构（供 UI 输出区显示）
+%MERGERAILOUTPUTS  将运行时状态输出写回参数结构（供 UI 输出区显示）
 %
 % 输入
 %   p     (1,1) struct : 当前参数
@@ -9,8 +9,8 @@ function p = mergeRailOutputs(p, state)
 %   p (1,1) struct : 合并输出后的参数
 %
 % 说明
-%   - 仅在 modelType=rail 时写入
-%   - 字段命名与 schema_get("rail") 中输出字段一致
+%   - rail 分支：写入 R 系列输出字段（epsilon/current/fMag/...）
+%   - selector 分支：写入 M4 输出字段（qOverMOut）
 
 arguments
     p (1,1) struct
@@ -18,6 +18,11 @@ arguments
 end
 
 modelType = lower(strtrim(string(pickField(p, 'modelType', pickField(state, 'modelType', "")))));
+if startsWith(modelType, "selector")
+    p.qOverMOut = double(pickField(state, 'qOverM', pickField(p, 'qOverMOut', 0.0)));
+    return;
+end
+
 if ~startsWith(modelType, "rail")
     return;
 end

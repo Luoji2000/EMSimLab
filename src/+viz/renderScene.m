@@ -21,31 +21,10 @@ cache = getRenderCache(ax);
 [xLim, yLim, viewSpan] = computeViewWindow(ax, state, p);
 modelType = resolveModelType(p, state);
 isMassSpec = isMassSpecTemplate(p, state);
-
-% 坐标轴设置
-ax.XLim = xLim;
-ax.YLim = yLim;
-% uiaxes 上用 DataAspectRatio 手动锁定更稳
-ax.DataAspectRatio = [1 1 1];
-ax.DataAspectRatioMode = 'manual';
-if logicalField(p, 'showGrid', true)
-    ax.XGrid = 'on';
-    ax.YGrid = 'on';
-else
-    ax.XGrid = 'off';
-    ax.YGrid = 'off';
-end
-
 tNow = pickField(state, 't', 0.0);
-if modelType == "rail"
-    title(ax, sprintf('导轨滑杆场景（t = %.3f s）', double(tNow)));
-elseif isMassSpec
-    title(ax, sprintf('质谱仪场景（t = %.3f s）', double(tNow)));
-else
-    title(ax, sprintf('粒子运动场景（t = %.3f s）', double(tNow)));
-end
-xlabel(ax, 'x (m)');
-ylabel(ax, 'y (m)');
+
+% 坐标轴设置（按需更新，减少每帧重复 set 的渲染开销）
+cache = updateAxesPresentation(ax, cache, xLim, yLim, p, modelType, isMassSpec, tNow, state);
 
 if doLog
     logger.logEvent(app, '调试', '渲染-坐标轴', struct( ...
@@ -65,7 +44,7 @@ if doLog
 end
 
 % 磁场标记
-[cache, bInfo] = updateBMarks(ax, cache, p, xLim, yLim, viewSpan);
+[cache, bInfo] = updateBMarks(ax, cache, p, xLim, yLim, viewSpan, modelType);
 if doLog
     logger.logEvent(app, '调试', '渲染-磁场标记', bInfo);
 end
@@ -80,7 +59,10 @@ if modelType == "rail"
     hideHandle(cache.hDebugText);
     hideHandle(cache.hParticle);
     hideHandle(cache.hForce);
+    hideHandle(cache.hForceElec);
+    hideHandle(cache.hForceMag);
     cache = hideMassSpecHandles(cache);
+    cache = hideSelectorHandles(cache);
 
     setRenderCache(ax, cache);
     if doLog
@@ -100,19 +82,29 @@ if doLog && isMassSpec
     logger.logEvent(app, '调试', '渲染-质谱仪', msInfo);
 end
 
+if modelType == "selector"
+    [cache, selectorInfo] = renderSelectorOverlay(ax, cache, p);
+    if doLog
+        logger.logEvent(app, '调试', '渲染-速度选择器', selectorInfo);
+    end
+else
+    cache = hideSelectorHandles(cache);
+end
+
 % 轨迹
 showTrail = logicalField(p, 'showTrail', true);
 traj = state.traj;
 if showTrail && size(traj, 1) >= 1
+    trajDraw = trimTrailForRender(traj, 1600);
     if ~isLiveHandle(cache.hTrail)
         cache.hTrail = line('Parent', ax, ...
-            'XData', traj(:, 1), ...
-            'YData', traj(:, 2), ...
+            'XData', trajDraw(:, 1), ...
+            'YData', trajDraw(:, 2), ...
             'LineStyle', '-', ...
             'Color', [0.05, 0.75, 0.25], ...
             'LineWidth', 2.2);
     else
-        set(cache.hTrail, 'XData', traj(:, 1), 'YData', traj(:, 2), 'Visible', 'on');
+        set(cache.hTrail, 'XData', trajDraw(:, 1), 'YData', trajDraw(:, 2), 'Visible', 'on');
     end
 else
     hideHandle(cache.hTrail);
@@ -153,7 +145,13 @@ if doLog
 end
 
 % 受力箭头（可选）
-[cache, fInfo] = updateForceArrow(ax, cache, state, p, viewSpan);
+if modelType == "selector"
+    [cache, fInfo] = updateSelectorForceArrows(ax, cache, state, p, viewSpan);
+else
+    [cache, fInfo] = updateForceArrow(ax, cache, state, p, viewSpan);
+    hideHandle(cache.hForceElec);
+    hideHandle(cache.hForceMag);
+end
 if doLog
     logger.logEvent(app, '调试', '渲染-受力箭头', fInfo);
 end
@@ -204,6 +202,8 @@ modelType = string(pickField(p, 'modelType', pickField(state, 'modelType', "part
 modelType = lower(strtrim(modelType));
 if startsWith(modelType, "rail")
     modelType = "rail";
+elseif startsWith(modelType, "selector")
+    modelType = "selector";
 else
     modelType = "particle";
 end
@@ -232,6 +232,15 @@ hideHandle(cache.hSpecWallLower);
 hideHandle(cache.hSpecWallUpper);
 end
 
+function cache = hideSelectorHandles(cache)
+%HIDESELECTORHANDLES  隐藏速度选择器专用图元
+hideHandle(cache.hSelectorPlateTop);
+hideHandle(cache.hSelectorPlateBottom);
+hideHandle(cache.hSelectorEArrow);
+hideHandle(cache.hForceElec);
+hideHandle(cache.hForceMag);
+end
+
 function cache = getRenderCache(ax)
 %GETRENDERCACHE  获取/初始化渲染句柄缓存
 cache = struct( ...
@@ -249,10 +258,22 @@ cache = struct( ...
     'hCurrentArrow', [], ...
     'hDriveArrow', [], ...
     'hAmpereArrow', [], ...
+    'hForceElec', [], ...
+    'hForceMag', [], ...
+    'hSelectorPlateTop', [], ...
+    'hSelectorPlateBottom', [], ...
+    'hSelectorEArrow', [], ...
     'hSpecWallLower', [], ...
     'hSpecWallUpper', [], ...
     'lastBMarkKey', "", ...
-    'lastBMarkCount', 0 ...
+    'lastBMarkCount', 0, ...
+    'axisStaticReady', false, ...
+    'lastXLim', [NaN, NaN], ...
+    'lastYLim', [NaN, NaN], ...
+    'lastShowGrid', true, ...
+    'lastTitleText', "", ...
+    'lastTitleModel', "", ...
+    'lastTitleStep', -inf ...
 );
 
 ud = ax.UserData;
@@ -261,6 +282,87 @@ if isstruct(ud) && isfield(ud, 'renderCache') && isstruct(ud.renderCache)
 end
 
 hold(ax, 'on');
+end
+
+function cache = updateAxesPresentation(ax, cache, xLim, yLim, p, modelType, isMassSpec, tNow, state)
+%UPDATEAXESPRESENTATION  仅在必要时更新坐标轴属性
+if ~cache.axisStaticReady
+    % 这些是静态属性，只需设置一次
+    ax.DataAspectRatio = [1 1 1];
+    ax.DataAspectRatioMode = 'manual';
+    xlabel(ax, 'x (m)');
+    ylabel(ax, 'y (m)');
+    cache.axisStaticReady = true;
+end
+
+if needUpdateRange(cache.lastXLim, xLim)
+    ax.XLim = xLim;
+    cache.lastXLim = reshape(double(xLim), 1, 2);
+end
+if needUpdateRange(cache.lastYLim, yLim)
+    ax.YLim = yLim;
+    cache.lastYLim = reshape(double(yLim), 1, 2);
+end
+
+showGrid = logicalField(p, 'showGrid', true);
+if cache.lastShowGrid ~= showGrid
+    if showGrid
+        ax.XGrid = 'on';
+        ax.YGrid = 'on';
+    else
+        ax.XGrid = 'off';
+        ax.YGrid = 'off';
+    end
+    cache.lastShowGrid = showGrid;
+end
+
+% 标题是动态文本，降频更新可显著降低 UI 重排开销
+stepNow = double(pickField(state, 'stepCount', 0.0));
+if ~isfinite(stepNow)
+    stepNow = 0.0;
+end
+needTitle = (stepNow <= 1) || (cache.lastTitleModel ~= modelType) || (mod(round(stepNow), 5) == 0);
+if ~needTitle
+    return;
+end
+
+if modelType == "rail"
+    titleText = string(sprintf('导轨滑杆场景（t = %.3f s）', double(tNow)));
+elseif modelType == "selector"
+    titleText = string(sprintf('速度选择器场景（t = %.3f s）', double(tNow)));
+elseif isMassSpec
+    titleText = string(sprintf('质谱仪场景（t = %.3f s）', double(tNow)));
+else
+    titleText = string(sprintf('粒子运动场景（t = %.3f s）', double(tNow)));
+end
+if cache.lastTitleText ~= titleText
+    title(ax, char(titleText));
+    cache.lastTitleText = titleText;
+end
+cache.lastTitleModel = modelType;
+cache.lastTitleStep = stepNow;
+end
+
+function tf = needUpdateRange(oldLim, newLim)
+%NEEDUPDATERANGE  判断坐标范围是否需要更新（带容差）
+tf = true;
+if isnumeric(oldLim) && isnumeric(newLim) && numel(oldLim) == 2 && numel(newLim) == 2 ...
+        && all(isfinite(oldLim)) && all(isfinite(newLim))
+    tf = any(abs(double(oldLim(:) - newLim(:))) > 1e-10);
+end
+end
+
+function trajDraw = trimTrailForRender(traj, maxPoints)
+%TRIMTRAILFORRENDER  仅渲染末尾轨迹，减少每帧大数组写入开销
+trajDraw = traj;
+if ~isnumeric(traj) || size(traj, 2) ~= 2
+    return;
+end
+n = size(traj, 1);
+if n <= maxPoints
+    return;
+end
+trajDraw = traj(n-maxPoints+1:n, :);
 end
 
 function setRenderCache(ax, cache)
@@ -313,6 +415,31 @@ end
 autoFollow = logicalField(p, 'autoFollow', true);
 followSpan = pickField(p, 'followSpan', 2.4);
 maxSpan = pickField(p, 'maxSpan', 40.0);
+modelType = resolveModelType(p, state);
+
+% M4 速度选择器：视窗以选择器方框为主，不跟随粒子抖动
+if modelType == "selector"
+    box = geom.readBoundsFromParams(p);
+    boxW = max(1e-6, double(box.xMax - box.xMin));
+    boxH = max(1e-6, double(box.yMax - box.yMin));
+    % 目标：方框占视窗约 62%（接近黄金比例）
+    selectorSpan = max(boxW, boxH) / 0.62;
+    span = max([double(followSpan), selectorSpan, 1.2]);
+    span = min(span, double(maxSpan));
+
+    cx = 0.5 * (double(box.xMin) + double(box.xMax));
+    cy = 0.5 * (double(box.yMin) + double(box.yMax));
+    [xLim, yLim] = makeCenteredWindow(cx, cy, span);
+
+    % 若粒子跑出视窗，才平移窗口，避免完全丢失粒子
+    if pointOutsideWindow(double(state.x), double(state.y), xLim, yLim)
+        pad = 0.06 * span;
+        [xLim, yLim] = shiftWindowToIncludePoint(xLim, yLim, double(state.x), double(state.y), pad);
+    end
+    storeViewWindow(ax, xLim, yLim);
+    span = xLim(2) - xLim(1);
+    return;
+end
 
 if autoFollow
     % 跟随模式：优先复用已有窗口，避免“坐标系跟着每帧抖动”
@@ -442,12 +569,13 @@ xLimNew = xLim + dx;
 yLimNew = yLim + dy;
 end
 
-function [cache, info] = updateBMarks(ax, cache, p, xLim, yLim, viewSpan)
+function [cache, info] = updateBMarks(ax, cache, p, xLim, yLim, viewSpan, modelType)
 %UPDATEBMARKS  更新磁场标记与有界磁场边框
 %
 % 渲染规则
 %   - bounded=false：磁场标记覆盖当前可视范围
 %   - bounded=true ：磁场标记仅在有界磁场区域内绘制，并显示黑色粗边框
+%   - 例外（M4 selector）：不绘制矩形边框，仅由速度选择器上下极板表示边界
 info = struct( ...
     'visible', false, ...
     'mark_count', 0, ...
@@ -462,7 +590,7 @@ bounded = logicalField(p, 'bounded', false);
 info.bounded = bounded;
 
 % 边框显示独立于 showBMarks：有界模式下始终显示边界位置
-[cache, boxVisible] = updateFieldBox(ax, cache, p, bounded);
+[cache, boxVisible] = updateFieldBox(ax, cache, p, bounded, modelType);
 info.box_visible = boxVisible;
 
 showB = logicalField(p, 'showBMarks', true);
@@ -583,10 +711,10 @@ xx = X(:);
 yy = Y(:);
 end
 
-function [cache, visible] = updateFieldBox(ax, cache, p, bounded)
+function [cache, visible] = updateFieldBox(ax, cache, p, bounded, modelType)
 %UPDATEFIELDBOX  更新有界磁场黑色边框
 visible = false;
-if ~bounded
+if ~bounded || modelType == "selector"
     hideHandle(cache.hFieldBox);
     return;
 end
@@ -681,6 +809,97 @@ info.slit_center_y = slitCenterY;
 info.slit_height = slitHeight;
 end
 
+function [cache, info] = renderSelectorOverlay(ax, cache, p)
+%RENDERSELECTOROVERLAY  绘制 M4 速度选择器极板与电场方向
+%
+% 场景语义
+%   - 极板区域默认由有界磁场边界控制（xMin/xMax/yMin/yMax）
+%   - 中央电场箭头用 Ey 正负表示方向（向上/向下）
+info = struct( ...
+    'visible', false, ...
+    'show_efield', false, ...
+    'x_min', 0.0, ...
+    'x_max', 0.0, ...
+    'y_top', 0.0, ...
+    'y_bottom', 0.0, ...
+    'ey', 0.0 ...
+);
+
+if ~logicalField(p, 'bounded', true)
+    cache = hideSelectorHandles(cache);
+    return;
+end
+
+box = geom.readBoundsFromParams(p);
+x1 = box.xMin;
+x2 = box.xMax;
+yBottom = box.yMin;
+yTop = box.yMax;
+lineColor = [0.12, 0.12, 0.12];
+
+if ~isLiveHandle(cache.hSelectorPlateTop)
+    cache.hSelectorPlateTop = line('Parent', ax, ...
+        'XData', [x1, x2], ...
+        'YData', [yTop, yTop], ...
+        'Color', lineColor, ...
+        'LineWidth', 3.0);
+else
+    set(cache.hSelectorPlateTop, ...
+        'XData', [x1, x2], ...
+        'YData', [yTop, yTop], ...
+        'Visible', 'on');
+end
+
+if ~isLiveHandle(cache.hSelectorPlateBottom)
+    cache.hSelectorPlateBottom = line('Parent', ax, ...
+        'XData', [x1, x2], ...
+        'YData', [yBottom, yBottom], ...
+        'Color', lineColor, ...
+        'LineWidth', 3.0);
+else
+    set(cache.hSelectorPlateBottom, ...
+        'XData', [x1, x2], ...
+        'YData', [yBottom, yBottom], ...
+        'Visible', 'on');
+end
+
+showEField = logicalField(p, 'showEField', true);
+if showEField
+    ey = double(pickField(p, 'Ey', 0.0));
+    dirY = sign(ey);
+    if dirY == 0
+        dirY = 1;
+    end
+    yMid = 0.5 * (yTop + yBottom);
+    xMid = 0.5 * (x1 + x2);
+    arrLen = 0.32 * max(yTop - yBottom, 1e-6);
+    if ~isLiveHandle(cache.hSelectorEArrow)
+        cache.hSelectorEArrow = quiver(ax, xMid, yMid, 0, dirY * arrLen, 0, ...
+            'AutoScale', 'off', ...
+            'Color', [0.95, 0.55, 0.12], ...
+            'LineWidth', 2.2, ...
+            'MaxHeadSize', 1.2);
+    else
+        set(cache.hSelectorEArrow, ...
+            'XData', xMid, ...
+            'YData', yMid, ...
+            'UData', 0, ...
+            'VData', dirY * arrLen, ...
+            'Visible', 'on');
+    end
+    info.show_efield = true;
+    info.ey = ey;
+else
+    hideHandle(cache.hSelectorEArrow);
+end
+
+info.visible = true;
+info.x_min = x1;
+info.x_max = x2;
+info.y_top = yTop;
+info.y_bottom = yBottom;
+end
+
 function [cache, info] = renderRailSceneBody(ax, cache, state, p, viewSpan)
 %RENDERRAILSCENEBODY  渲染导轨场景主体（R1）
 %
@@ -757,15 +976,16 @@ info.resistor_visible = logical(resistorVisible);
 showTrail = logicalField(p, 'showTrail', true);
 traj = pickField(state, 'traj', [xRod, yCenter]);
 if showTrail && isnumeric(traj) && size(traj, 2) == 2 && size(traj, 1) >= 1
+    trajDraw = trimTrailForRender(traj, 1600);
     if ~isLiveHandle(cache.hTrail)
         cache.hTrail = line('Parent', ax, ...
-            'XData', traj(:, 1), ...
-            'YData', traj(:, 2), ...
+            'XData', trajDraw(:, 1), ...
+            'YData', trajDraw(:, 2), ...
             'LineStyle', '-', ...
             'Color', [0.05, 0.75, 0.25], ...
             'LineWidth', 2.0);
     else
-        set(cache.hTrail, 'XData', traj(:, 1), 'YData', traj(:, 2), 'Visible', 'on');
+        set(cache.hTrail, 'XData', trajDraw(:, 1), 'YData', trajDraw(:, 2), 'Visible', 'on');
     end
     info.trail_visible = true;
 else
@@ -1035,6 +1255,90 @@ info.visible = true;
 info.arrow_len = fLen;
 end
 
+function [cache, info] = updateSelectorForceArrows(ax, cache, state, p, viewSpan)
+%UPDATESELECTORFORCEARROWS  M4 受力箭头更新（合力/电场力/磁场力）
+info = struct( ...
+    'visible', false, ...
+    'show_switch', false, ...
+    'show_felec', false, ...
+    'show_fmag', false, ...
+    'f_total', 0.0, ...
+    'f_elec', 0.0, ...
+    'f_mag', 0.0 ...
+);
+
+showTotal = logicalField(p, 'showF', false);
+showFElec = logicalField(p, 'showFElec', false);
+showFMag = logicalField(p, 'showFMag', false);
+info.show_switch = showTotal;
+info.show_felec = showFElec;
+info.show_fmag = showFMag;
+
+x = double(state.x);
+y = double(state.y);
+fTotal = [double(pickField(state, 'fTotalX', 0.0)); double(pickField(state, 'fTotalY', 0.0))];
+fElec = [double(pickField(state, 'fElecX', 0.0)); double(pickField(state, 'fElecY', 0.0))];
+fMag = [double(pickField(state, 'fMagX', 0.0)); double(pickField(state, 'fMagY', 0.0))];
+info.f_total = norm(fTotal);
+info.f_elec = norm(fElec);
+info.f_mag = norm(fMag);
+
+if showTotal
+    [cache.hForce, totalVisible] = upsertVectorArrow(ax, cache.hForce, x, y, fTotal, [0.22, 0.70, 0.95], 2.1, viewSpan);
+else
+    totalVisible = false;
+    hideHandle(cache.hForce);
+end
+
+if showFElec
+    [cache.hForceElec, elecVisible] = upsertVectorArrow(ax, cache.hForceElec, x, y, fElec, [0.95, 0.52, 0.18], 1.9, viewSpan);
+else
+    elecVisible = false;
+    hideHandle(cache.hForceElec);
+end
+
+if showFMag
+    [cache.hForceMag, magVisible] = upsertVectorArrow(ax, cache.hForceMag, x, y, fMag, [0.62, 0.34, 0.95], 1.9, viewSpan);
+else
+    magVisible = false;
+    hideHandle(cache.hForceMag);
+end
+
+info.visible = totalVisible || elecVisible || magVisible;
+end
+
+function [h, visible] = upsertVectorArrow(ax, h, x, y, vec, color, lineWidth, viewSpan)
+%UPSERTVECTORARROW  按向量方向更新/创建 quiver 箭头
+visible = false;
+if norm(vec) <= 1e-12
+    hideHandle(h);
+    return;
+end
+
+dir = vec / norm(vec);
+baseLen = 0.10 * max(viewSpan, 1e-6);
+gain = 1.0 + 0.55 * log10(1.0 + norm(vec));
+len = min(max(baseLen * gain, 0.08 * viewSpan), 0.35 * viewSpan);
+
+if ~isLiveHandle(h)
+    h = quiver(ax, x, y, dir(1) * len, dir(2) * len, 0, ...
+        'AutoScale', 'off', ...
+        'Color', color, ...
+        'LineWidth', lineWidth, ...
+        'MaxHeadSize', 1.3);
+else
+    set(h, ...
+        'XData', x, ...
+        'YData', y, ...
+        'UData', dir(1) * len, ...
+        'VData', dir(2) * len, ...
+        'Color', color, ...
+        'LineWidth', lineWidth, ...
+        'Visible', 'on');
+end
+visible = true;
+end
+
 function len = velocityArrowLength(speed, radius, viewSpan)
 %VELOCITYARROWLENGTH  速度箭头长度（速度+半径对数放大）
 %
@@ -1248,10 +1552,10 @@ function tf = shouldLogRender(state)
 %SHOULDLOGRENDER  渲染日志节流判定
 %
 % 规则
-%   - stepCount 可用时：每 20 帧记录一次
+%   - stepCount 可用时：每 120 帧记录一次
 %   - stepCount 缺失时：默认记录
 if isstruct(state) && isfield(state, 'stepCount')
-    tf = mod(double(state.stepCount), 20) == 0;
+    tf = mod(double(state.stepCount), 120) == 0;
 else
     tf = true;
 end

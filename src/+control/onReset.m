@@ -23,11 +23,27 @@ end
 % 1) 根据当前参数重建状态
 app.State = engine.reset(app.State, app.Params);
 app.Params = control.mergeRailOutputs(app.Params, app.State);
-ui.applyPayload(app, app.Params);
+ui.applyOutputs(app, extractOutputFields(app.Params));
 
 % 2) 刷新界面
 ui.render(app, app.State);
 
 % 3) 写日志
 logger.logEvent(app, '信息', '仿真重置', struct('template', app.CurrentTemplateId));
+end
+
+function out = extractOutputFields(paramsIn)
+%EXTRACTOUTPUTFIELDS  从完整参数中提取输出区字段（用于增量 UI 刷新）
+out = struct();
+if ~isstruct(paramsIn)
+    return;
+end
+
+keys = ["epsilonOut","currentOut","xOut","vOut","fMagOut","qHeatOut","pElecOut","qOverMOut"];
+for i = 1:numel(keys)
+    key = char(keys(i));
+    if isfield(paramsIn, key)
+        out.(key) = paramsIn.(key);
+    end
+end
 end
