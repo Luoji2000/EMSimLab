@@ -1,4 +1,5 @@
 ﻿function onTick(app, varargin)
+%% 入口：连续播放单帧回调
 %ONTICK  连续播放单帧回调（由定时器驱动）
 %
 % 输入
@@ -69,6 +70,7 @@ catch err
     end
 end
 
+%% 输出区字段提取与性能统计
 function out = extractOutputFields(paramsIn)
 %EXTRACTOUTPUTFIELDS  从完整参数中提取输出区字段（用于增量 UI 刷新）
 out = struct();
@@ -132,6 +134,7 @@ perf = struct( ...
 );
 end
 
+%% 日志 payload 组装
 function payload = buildTickLogPayload(app, frameDt, subDt, subSteps, tNow)
 %BUILDTICKLOGPAYLOAD  生成单帧推进日志负载
 payload = struct( ...
@@ -184,6 +187,7 @@ payload = struct( ...
 );
 end
 
+%% 子步推进与子步规划
 function [stateOut, subSteps, subDt] = advanceWithSubsteps(stateIn, params, frameDt)
 %ADVANCEWITHSUBSTEPS  单帧子步进推进
 %
@@ -248,6 +252,7 @@ subSteps = min(maxSubSteps, max(nByTime, nByAngle));
 subDt = frameDt / subSteps;
 end
 
+%% 运行时环境与节流判定
 function omega = cyclotronOmega(params)
 %CYCLOTRONOMEGA  估算角速度 omega = q*Bz/m（用于子步规划）
 q = double(pickField(params, 'q', 0.0));
@@ -324,6 +329,7 @@ else
 end
 end
 
+%% 通用字段读取工具
 function v = pickField(s, name, fallback)
 %PICKFIELD  安全读取字段（缺失则返回 fallback）
 if isstruct(s) && isfield(s, name)

@@ -1,4 +1,5 @@
 ﻿function startup(app)
+%% 入口：启动接线总流程
 %STARTUP  应用启动接线入口（只做装配，不做业务计算）
 %
 % 输入
@@ -65,6 +66,7 @@ logger.logEvent(app, '调试', '函数来源检查', struct( ...
 ));
 end
 
+%% 通用函数可用性检查
 function tf = hasFunction(name)
 %HASFUNCTION  判断函数是否可解析（兼容 package 函数）
 %

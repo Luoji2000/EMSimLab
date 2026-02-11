@@ -1,4 +1,5 @@
 ﻿function render(app, state)
+%% 入口：渲染总调度
 %RENDER  渲染总入口（场景 + 曲线，统一容错）
 %
 % 输入
@@ -36,6 +37,7 @@ if hasFunction('viz.renderPlots')
 end
 end
 
+%% 通用函数可用性检查
 function tf = hasFunction(name)
 %HASFUNCTION  判断函数是否可解析（兼容 package 函数）
 %

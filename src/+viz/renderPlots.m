@@ -1,4 +1,5 @@
 ﻿function renderPlots(app, state)
+%% 入口：曲线渲染主流程
 %RENDERPLOTS  曲线渲染入口（R 模板三子图：v / I / Fmag）
 %
 % 渲染策略
@@ -47,6 +48,7 @@ cache = drawRailCurves(handles, cache);
 writePlotCache(app, cache);
 end
 
+%% 参数读取与模型判定
 function params = readParams(app)
 %READPARAMS  安全读取 app.Params
 params = struct();
@@ -65,6 +67,7 @@ else
 end
 end
 
+%% 曲线句柄与缓存管理
 function [handles, cache] = ensurePlotHandles(app)
 %ENSUREPLOTHANDLES  确保三子图与缓存结构已创建
 cache = readPlotCache(app);
@@ -136,6 +139,7 @@ ax.XGrid = 'on';
 ax.YGrid = 'on';
 end
 
+%% 历史追加与曲线绘制
 function cache = appendHistory(cache, state)
 %APPENDHISTORY  追加单步数据到曲线历史
 %
@@ -225,6 +229,7 @@ if ~(isnumeric(cache.lastXLim) && numel(cache.lastXLim) == 2 && all(isfinite(cac
 end
 end
 
+%% 占位提示与默认缓存
 function cache = clearHistoryAndShowMessage(handles, cache, messageText)
 %CLEARHISTORYANDSHOWMESSAGE  清空曲线并显示占位提示
 cache.t = [];
@@ -309,6 +314,7 @@ end
 app.plotsGrid.UserData = ud;
 end
 
+%% 通用工具
 function v = logicalField(s, name, fallback)
 %LOGICALFIELD  安全读取 logical 字段
 raw = pickField(s, name, fallback);

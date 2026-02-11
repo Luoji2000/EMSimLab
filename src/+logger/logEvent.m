@@ -1,4 +1,5 @@
 ﻿function entry = logEvent(app, level, eventName, payload)
+%% 入口：日志写入与回显
 %LOGEVENT  统一日志入口：写入界面日志区，并同步命令行输出
 %
 % 输入
@@ -54,6 +55,7 @@ if shouldEcho
 end
 end
 
+%% 级别与句柄安全
 function label = normalizeLevel(levelRaw)
 %NORMALIZELEVEL  统一日志级别显示（中文优先）
 token = upper(strtrim(string(levelRaw)));
@@ -79,6 +81,7 @@ catch
 end
 end
 
+%% 文本拼装
 function line = composeLine(entry)
 %COMPOSELINE  生成单行日志文本
 ts = char(datetime(entry.ts, 'Format', 'HH:mm:ss.SSS'));
@@ -90,6 +93,7 @@ else
 end
 end
 
+%% payload 序列化
 function text = payloadToText(payload)
 %PAYLOADTOTEXT  将 payload 安全序列化为单行文本
 text = "";
@@ -116,285 +120,173 @@ end
 text = scalarToText(payload);
 end
 
+%% payload 键名映射（结构体表）
 function label = payloadKeyToLabel(key)
-%PAYLOADKEYTOLABEL  将内部英文键映射为中文显示名
-token = lower(strtrim(string(key)));
-switch token
-    case "entry"
-        label = "入口";
-    case "template"
-        label = "模板";
-    case "group_count"
-        label = "分组数";
-    case "template_count"
-        label = "模板数";
-    case "class_name"
-        label = "类名";
-    case "property_count"
-        label = "属性数";
-    case "event"
-        label = "事件";
-    case "source"
-        label = "来源";
-    case "value"
-        label = "数值";
-    case "delta"
-        label = "增量";
-    case "reason"
-        label = "原因";
-    case "path"
-        label = "路径";
-    case "line_count"
-        label = "行数";
-    case "requested_id"
-        label = "请求模板ID";
-    case "raw_token"
-        label = "原始模板令牌";
-    case "template_id"
-        label = "模板ID";
-    case "current_template"
-        label = "当前模板";
-    case "current_schema"
-        label = "当前参数模式";
-    case "current_engine"
-        label = "当前引擎模式";
-    case "schema_key"
-        label = "参数模式";
-    case "engine_key"
-        label = "引擎模式";
-    case "param_component"
-        label = "参数组件";
-    case "changed_summary"
-        label = "变化摘要";
-    case "dt"
-        label = "步长";
-    case "t"
-        label = "当前时间";
-    case "enabled"
-        label = "启用";
-    case "loop_closed"
-        label = "闭合回路";
-    case "drive_enabled"
-        label = "外力驱动";
-    case "ui_render_path"
-        label = "UI渲染路径";
-    case "viz_scene_path"
-        label = "场景渲染路径";
-    case "engine_step_path"
-        label = "步进引擎路径";
-    case "traj_points"
-        label = "轨迹点数";
-    case "point_count"
-        label = "点数";
-    case "x_lim_text"
-        label = "X范围";
-    case "y_lim_text"
-        label = "Y范围";
-    case "view_span"
-        label = "视野跨度";
-    case "finite_xy"
-        label = "坐标有效";
-    case "mark_count"
-        label = "标记数量";
-    case "marker"
-        label = "标记形状";
-    case "bdir"
-        label = "磁场方向";
-    case "show_switch"
-        label = "开关";
-    case "visible"
-        label = "可见";
-    case "speed"
-        label = "速度";
-    case "radius"
-        label = "半径";
-    case "arrow_len"
-        label = "箭头长度";
-    case "omega"
-        label = "角速度";
-    case "child_count"
-        label = "子对象数";
-    case "allchild_count"
-        label = "全部对象数";
-    case "first_type"
-        label = "首对象类型";
-    case "first_visible"
-        label = "首对象可见";
-    case "axes_visible"
-        label = "坐标轴可见";
-    case "axes_pos_text"
-        label = "坐标轴位置";
-    case "axes_inner_text"
-        label = "绘图区位置";
-    case "figure_visible"
-        label = "窗口可见";
-    case "scene_tab_visible"
-        label = "场景页可见";
-    case "scene_selected"
-        label = "场景页选中";
-    case "selected_tab_title"
-        label = "当前Tab";
-    case "trail_visible"
-        label = "轨迹可见";
-    case "particle_visible"
-        label = "粒子可见";
-    case "vel_visible"
-        label = "速度箭头可见";
-    case "bmark_visible"
-        label = "磁场标记可见";
-    case "field_box_visible"
-        label = "磁场边框可见";
-    case "bounded"
-        label = "有界模式";
-    case "box_visible"
-        label = "边框可见";
-    case "cache_hit"
-        label = "缓存命中";
-    case "auto_follow"
-        label = "自动跟随";
-    case "follow_span"
-        label = "跟随视野";
-    case "x"
-        label = "x";
-    case "y"
-        label = "y";
-    case "vx"
-        label = "vx";
-    case "vy"
-        label = "vy";
-    case "mode"
-        label = "模式";
-    case "step_ms"
-        label = "物理推进耗时ms";
-    case "output_ms"
-        label = "输出回写耗时ms";
-    case "render_ms"
-        label = "渲染耗时ms";
-    case "tick_ms"
-        label = "单帧总耗时ms";
-    case "ema_step_ms"
-        label = "物理推进均值ms";
-    case "ema_output_ms"
-        label = "输出回写均值ms";
-    case "ema_render_ms"
-        label = "渲染均值ms";
-    case "ema_tick_ms"
-        label = "单帧总耗时均值ms";
-    case "frame_budget_ms"
-        label = "帧预算ms";
-    case "headroom_ms"
-        label = "帧余量ms";
-    case "fps_est"
-        label = "估算FPS";
-    case "main_cost"
-        label = "主耗时环节";
-    case "main_cost_ms"
-        label = "主耗时ms";
-    case "model_type"
-        label = "模型";
-    case "wall_x"
-        label = "粗线x";
-    case "slit_center_y"
-        label = "小孔中心y";
-    case "slit_height"
-        label = "小孔高度";
-    case "show_efield"
-        label = "显示电场箭头";
-    case "ey"
-        label = "Ey";
-    case "y_top"
-        label = "上极板y";
-    case "y_bottom"
-        label = "下极板y";
-    case "show_felec"
-        label = "电场力箭头开关";
-    case "show_fmag"
-        label = "磁场力箭头开关";
-    case "f_total"
-        label = "合力模";
-    case "f_elec"
-        label = "电场力模";
-    case "f_mag"
-        label = "磁场力模";
-    case "rail_visible"
-        label = "导轨可见";
-    case "rod_visible"
-        label = "导体棒可见";
-    case "resistor_visible"
-        label = "电阻可见";
-    case "show_current"
-        label = "电流箭头显示";
-    case "current_source"
-        label = "电流方向来源";
-    case "show_drive_force"
-        label = "外力箭头显示";
-    case "show_ampere_force"
-        label = "安培力箭头显示";
-    case "epsilon"
-        label = "感应电动势";
-    case "current"
-        label = "电流";
-    case "fmag"
-        label = "安培力";
-    case "fdrive"
-        label = "外力";
-    case "sub_dt"
-        label = "子步长";
-    case "sub_steps"
-        label = "子步数";
-    case "x_min"
-        label = "x_min";
-    case "x_max"
-        label = "x_max";
-    case "x_out"
-        label = "输出x_t";
-    case "v_out"
-        label = "输出v_t";
-    case "q_heat_out"
-        label = "输出Q";
-    case "q_heat"
-        label = "焦耳热";
-    case "in_field"
-        label = "在磁场内";
-    case "from_class"
-        label = "旧组件";
-    case "to_class"
-        label = "新组件";
-    case "force_recreate"
-        label = "强制重建";
-    case "resolved_class"
-        label = "目标组件类";
-    case "actual_class"
-        label = "实际组件类";
-    case "old_class"
-        label = "旧组件类";
-    case "has_old_component"
-        label = "存在旧组件";
-    case "m1_class_exists"
-        label = "M1类可用";
-    case "m4_class_exists"
-        label = "M4类可用";
-    case "r2_class_exists"
-        label = "R2类可用";
-    case "m5_class_exists"
-        label = "M5类可用";
-    case "m1_path"
-        label = "M1类路径";
-    case "m4_path"
-        label = "M4类路径";
-    case "r2_path"
-        label = "R2类路径";
-    case "m5_path"
-        label = "M5类路径";
-    case "on_template_changed_path"
-        label = "模板切换函数路径";
-    case "main_app_path"
-        label = "MainApp路径";
-    otherwise
-        label = key;
+%PAYLOADKEYTOLABEL  将内部英文键映射为中文显示名（结构体映射表版本）
+token = char(lower(strtrim(string(key))));
+map = payloadLabelMap();
+if isfield(map, token)
+    label = map.(token);
+else
+    label = string(key);
 end
 end
 
+function map = payloadLabelMap()
+%PAYLOADLABELMAP  payload 键名映射表（集中维护，避免超长 switch）
+persistent labelMap
+if ~isempty(labelMap)
+    map = labelMap;
+    return;
+end
+
+pairs = {
+    "entry",                    "入口";
+    "template",                 "模板";
+    "group_count",              "分组数";
+    "template_count",           "模板数";
+    "class_name",               "类名";
+    "property_count",           "属性数";
+    "event",                    "事件";
+    "source",                   "来源";
+    "value",                    "数值";
+    "delta",                    "增量";
+    "reason",                   "原因";
+    "path",                     "路径";
+    "line_count",               "行数";
+    "requested_id",             "请求模板ID";
+    "raw_token",                "原始模板令牌";
+    "template_id",              "模板ID";
+    "current_template",         "当前模板";
+    "current_schema",           "当前参数模式";
+    "current_engine",           "当前引擎模式";
+    "schema_key",               "参数模式";
+    "engine_key",               "引擎模式";
+    "param_component",          "参数组件";
+    "changed_summary",          "变化摘要";
+    "dt",                       "步长";
+    "t",                        "当前时间";
+    "enabled",                  "启用";
+    "loop_closed",              "闭合回路";
+    "drive_enabled",            "外力驱动";
+    "ui_render_path",           "UI渲染路径";
+    "viz_scene_path",           "场景渲染路径";
+    "engine_step_path",         "步进引擎路径";
+    "traj_points",              "轨迹点数";
+    "point_count",              "点数";
+    "x_lim_text",               "X范围";
+    "y_lim_text",               "Y范围";
+    "view_span",                "视野跨度";
+    "finite_xy",                "坐标有效";
+    "mark_count",               "标记数量";
+    "marker",                   "标记形状";
+    "bdir",                     "磁场方向";
+    "show_switch",              "开关";
+    "visible",                  "可见";
+    "speed",                    "速度";
+    "radius",                   "半径";
+    "arrow_len",                "箭头长度";
+    "omega",                    "角速度";
+    "child_count",              "子对象数";
+    "allchild_count",           "全部对象数";
+    "first_type",               "首对象类型";
+    "first_visible",            "首对象可见";
+    "axes_visible",             "坐标轴可见";
+    "axes_pos_text",            "坐标轴位置";
+    "axes_inner_text",          "绘图区位置";
+    "figure_visible",           "窗口可见";
+    "scene_tab_visible",        "场景页可见";
+    "scene_selected",           "场景页选中";
+    "selected_tab_title",       "当前Tab";
+    "trail_visible",            "轨迹可见";
+    "particle_visible",         "粒子可见";
+    "vel_visible",              "速度箭头可见";
+    "bmark_visible",            "磁场标记可见";
+    "field_box_visible",        "磁场边框可见";
+    "bounded",                  "有界模式";
+    "box_visible",              "边框可见";
+    "cache_hit",                "缓存命中";
+    "auto_follow",              "自动跟随";
+    "follow_span",              "跟随视野";
+    "x",                        "x";
+    "y",                        "y";
+    "vx",                       "vx";
+    "vy",                       "vy";
+    "mode",                     "模式";
+    "step_ms",                  "物理推进耗时ms";
+    "output_ms",                "输出回写耗时ms";
+    "render_ms",                "渲染耗时ms";
+    "tick_ms",                  "单帧总耗时ms";
+    "ema_step_ms",              "物理推进均值ms";
+    "ema_output_ms",            "输出回写均值ms";
+    "ema_render_ms",            "渲染均值ms";
+    "ema_tick_ms",              "单帧总耗时均值ms";
+    "frame_budget_ms",          "帧预算ms";
+    "headroom_ms",              "帧余量ms";
+    "fps_est",                  "估算FPS";
+    "main_cost",                "主耗时环节";
+    "main_cost_ms",             "主耗时ms";
+    "model_type",               "模型";
+    "wall_x",                   "粗线x";
+    "slit_center_y",            "小孔中心y";
+    "slit_height",              "小孔高度";
+    "show_efield",              "显示电场箭头";
+    "ey",                       "Ey";
+    "y_top",                    "上极板y";
+    "y_bottom",                 "下极板y";
+    "show_felec",               "电场力箭头开关";
+    "show_fmag",                "磁场力箭头开关";
+    "f_total",                  "合力模";
+    "f_elec",                   "电场力模";
+    "f_mag",                    "磁场力模";
+    "rail_visible",             "导轨可见";
+    "rod_visible",              "导体棒可见";
+    "resistor_visible",         "电阻可见";
+    "show_current",             "电流箭头显示";
+    "current_source",           "电流方向来源";
+    "show_drive_force",         "外力箭头显示";
+    "show_ampere_force",        "安培力箭头显示";
+    "epsilon",                  "感应电动势";
+    "current",                  "电流";
+    "fmag",                     "安培力";
+    "fdrive",                   "外力";
+    "sub_dt",                   "子步长";
+    "sub_steps",                "子步数";
+    "x_min",                    "x_min";
+    "x_max",                    "x_max";
+    "x_out",                    "输出x_t";
+    "v_out",                    "输出v_t";
+    "q_heat_out",               "输出Q";
+    "q_heat",                   "焦耳热";
+    "in_field",                 "在磁场内";
+    "from_class",               "旧组件";
+    "to_class",                 "新组件";
+    "force_recreate",           "强制重建";
+    "resolved_class",           "目标组件类";
+    "actual_class",             "实际组件类";
+    "old_class",                "旧组件类";
+    "has_old_component",        "存在旧组件";
+    "m1_class_exists",          "M1类可用";
+    "m4_class_exists",          "M4类可用";
+    "r2_class_exists",          "R2类可用";
+    "m5_class_exists",          "M5类可用";
+    "m1_path",                  "M1类路径";
+    "m4_path",                  "M4类路径";
+    "r2_path",                  "R2类路径";
+    "m5_path",                  "M5类路径";
+    "on_template_changed_path", "模板切换函数路径";
+    "main_app_path",            "MainApp路径"
+};
+
+labelMap = struct();
+for i = 1:size(pairs, 1)
+    keyName = char(pairs{i, 1});
+    labelMap.(keyName) = string(pairs{i, 2});
+end
+map = labelMap;
+end
+
+%% 标量转文本工具
 function text = scalarToText(v)
 %SCALARTOTEXT  将常见值转换为可读文本
 if isstring(v) || ischar(v)

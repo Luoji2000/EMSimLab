@@ -1,4 +1,5 @@
 ﻿function state = reset(state, params)
+%% 入口：按模型分发重置
 %RESET  重置仿真状态（按 modelType 分发）
 %
 % 输入
@@ -30,6 +31,7 @@ end
 
 end
 
+%% 粒子模型（M1/M5）重置
 function state = resetParticleState(state, params)
 %RESETPARTICLESTATE  重置 M 系列粒子状态
 state.t = 0.0;
@@ -68,6 +70,7 @@ end
 
 end
 
+%% 导轨模型（R 系列）重置
 function state = resetRailState(state, params)
 %RESETRAILSTATE  重置 R 系列导轨状态
 state.t = 0.0;
@@ -98,6 +101,7 @@ state = attachRailOutputs(state, params, inField);
 
 end
 
+%% 速度选择器模型（M4）重置
 function state = resetSelectorState(state, params)
 %RESETSELECTORSTATE  重置 M4 速度选择器状态
 state.t = 0.0;
@@ -137,6 +141,7 @@ end
 state = attachSelectorOutputs(state, params, state.inField);
 end
 
+%% 输出挂载与模型判定
 function state = attachRailOutputs(state, params, inField)
 %ATTACHRAILOUTPUTS  计算并挂载 R 系列输出量
 vx = double(pickField(state, 'vx', 0.0));
@@ -210,6 +215,7 @@ else
 end
 end
 
+%% 通用工具
 function v = logicalField(s, name, fallback)
 %LOGICALFIELD  安全读取 logical 字段
 raw = pickField(s, name, fallback);

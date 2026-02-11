@@ -1,4 +1,5 @@
 ﻿function state = step(state, params, dt)
+%% 入口：按模型分发步进
 %STEP  推进一步（按 modelType 分发）
 %
 % 输入
@@ -36,6 +37,7 @@ end
 
 end
 
+%% 粒子模型（M1/M2/M5）
 function state = stepParticleState(state, params, dt)
 %STEPPARTICLESTATE  M 系列粒子推进
 state = ensureParticleState(state, params);
@@ -87,6 +89,7 @@ if ~isfield(state, 'stepCount')
 end
 end
 
+%% 速度选择器模型（M4）
 function state = stepSelectorState(state, params, dt)
 %STEPSELECTORSTATE  M4 速度选择器推进（交叉场）
 state = ensureSelectorState(state, params);
@@ -147,6 +150,7 @@ if ~isfield(state, 'inField')
 end
 end
 
+%% 导轨模型（R 系列）
 function state = stepRailState(state, params, dt)
 %STEPRAILSTATE  R 系列导轨推进
 state = ensureRailState(state, params);
@@ -226,6 +230,7 @@ if ~isfield(state, 'qHeat')
 end
 end
 
+%% 输出挂载与模型判定
 function state = attachRailOutputs(state, params, inField)
 %ATTACHRAILOUTPUTS  计算导轨输出量
 vx = double(pickField(state, 'vx', 0.0));
@@ -293,6 +298,7 @@ else
 end
 end
 
+%% 有界分段推进与跨界定位（粒子/M4）
 function [rNew, vNew, inField] = propagateBoundedChain(r0, v0, omega, dt, box)
 %PROPAGATEBOUNDEDCHAIN  有界单步分段推进
 remaining = double(dt);
@@ -433,6 +439,7 @@ end
 tau = hi;
 end
 
+%% 段内推进核（场内/场外）
 function [rNew, vNew] = propagateSegment(rOld, vOld, omega, inField, dt)
 %PROPAGATESEGMENT  在指定区域属性下推进一个子段
 if inField
@@ -478,6 +485,7 @@ function [rNew, vNew] = propagateInField(rOld, vOld, omega, dt)
 [rNew, vNew] = physics.rotmatStep2D(rOld, vOld, omega, dt);
 end
 
+%% 通用工具
 function omega = cyclotronOmega(params)
 %CYCLOTRONOMEGA  计算回旋角速度 omega = q*Bz/m
 q = pickField(params, 'q', 0.0);

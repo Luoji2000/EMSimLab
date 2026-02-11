@@ -1,4 +1,5 @@
 ﻿function renderScene(app, state)
+%% 入口：场景渲染主流程
 %RENDERSCENE  场景渲染（M1 有界/无界统一版本）
 %
 % 渲染内容
@@ -170,6 +171,7 @@ if doLog
 end
 end
 
+%% 参数与状态读取
 function p = readParams(app)
 %READPARAMS  安全读取 app.Params
 p = struct();
@@ -241,6 +243,7 @@ hideHandle(cache.hForceElec);
 hideHandle(cache.hForceMag);
 end
 
+%% 句柄缓存与坐标轴更新
 function cache = getRenderCache(ax)
 %GETRENDERCACHE  获取/初始化渲染句柄缓存
 cache = struct( ...
@@ -387,6 +390,7 @@ for i = 1:numel(fields)
 end
 end
 
+%% 视窗计算与跟随策略
 function [xLim, yLim, span] = computeViewWindow(ax, state, p)
 %COMPUTEVIEWWINDOW  计算视口范围（窗口锁定，越界再平移）
 %
@@ -569,6 +573,7 @@ xLimNew = xLim + dx;
 yLimNew = yLim + dy;
 end
 
+%% 磁场标记与边框
 function [cache, info] = updateBMarks(ax, cache, p, xLim, yLim, viewSpan, modelType)
 %UPDATEBMARKS  更新磁场标记与有界磁场边框
 %
@@ -740,6 +745,7 @@ end
 visible = true;
 end
 
+%% 模板叠层（M5/M4）
 function [cache, info] = renderMassSpecOverlay(ax, cache, p, yLim, isMassSpec)
 %RENDERMASSSPECOVERLAY  绘制 M5 质谱仪左侧粗线与狭缝
 %
@@ -900,6 +906,7 @@ info.y_top = yTop;
 info.y_bottom = yBottom;
 end
 
+%% 导轨场景主体（R 系列）
 function [cache, info] = renderRailSceneBody(ax, cache, state, p, viewSpan)
 %RENDERRAILSCENEBODY  渲染导轨场景主体（R1）
 %
@@ -1135,6 +1142,7 @@ end
 visible = true;
 end
 
+%% 动态箭头（速度/受力）
 function [cache, info] = updateVelocityArrow(ax, cache, state, p, viewSpan)
 %UPDATEVELOCITYARROW  更新速度箭头（显著放大）
 info = struct('visible', false, 'show_switch', false, 'speed', 0.0, 'radius', 0.0, 'arrow_len', 0.0);
@@ -1339,6 +1347,7 @@ end
 visible = true;
 end
 
+%% 通用工具与调试日志
 function len = velocityArrowLength(speed, radius, viewSpan)
 %VELOCITYARROWLENGTH  速度箭头长度（速度+半径对数放大）
 %

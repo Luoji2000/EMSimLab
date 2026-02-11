@@ -1,6 +1,8 @@
 ﻿# 更新日志
 
 ## 2026-02-11
+- 文档：`docs/中文技术文档.md` 新增“新手版函数链条拆解”“递归与循环说明”“关键文件总入口速查”，明确按钮触发后的完整调用路径。
+- 文档：补充“主业务链无递归、播放为定时器循环、递归仅用于模板树节点查找（findNodeById）”说明，降低新手阅读成本。
 - 新增：M4 模板接入（`src/+templates/+defs/M4.m` + `schema_get("selector")`）。
 - 新增：参数组件 `m/M4_for_test.m`，支持 `Value/getPayload/setPayload/PayloadChanged` 统一接口。
 - 新增：交叉场解析推进 `src/+physics/crossedFieldStep2D.m`（漂移+旋转+解析位移积分）。
