@@ -244,8 +244,12 @@ function state = stepRailState(state, params, dt)
 %     推进后的导轨状态，附加当前输出量与模式标签。
 %
 % 说明
-%   - R8 模板会转入专用推进函数 stepR8FrameState。
+%   - R5/R8 模板会转入各自专用推进函数。
 %   - 其它 R 系列统一在本函数按元件类型分支推进。
+if isR5Template(params)
+    state = stepR5DualState(state, params, dt);
+    return;
+end
 if isR8Template(params)
     state = stepR8FrameState(state, params, dt);
     return;
@@ -334,6 +338,103 @@ if elementType == "R"
         state.rail.qHeat = double(state.qHeat);
     end
 end
+end
+
+function state = stepR5DualState(state, params, dt)
+%STEPR5DUALSTATE  R5 双导体棒推进（事件驱动解析段 + 碰撞映射）
+%
+% 输入
+%   state  (1,1) struct
+%     当前 R5 状态，至少包含 xA/xB/vA/vB 与累计热量字段。
+%   params (1,1) struct
+%     R5 参数结构（mA/mB/RA/RB/FdriveA/FdriveB/rho/bounds 等）。
+%   dt     (1,1) double
+%     本次推进步长（秒）。
+%
+% 输出
+%   state  (1,1) struct
+%     推进后的 R5 状态，含 A/B 状态、中心量、电学输出与热量累计。
+state = ensureRailState(state, params);
+if ~isfield(state, 'xA') || ~isfield(state, 'xB') || ~isfield(state, 'vA') || ~isfield(state, 'vB')
+    state = engine.reset(state, params);
+end
+
+prevCenterV = double(pickField(state, 'vCenter', 0.5 * (double(state.vA) + double(state.vB))));
+prevT = double(pickField(state, 't', 0.0));
+yCenter = double(pickField(state, 'y', pickField(params, 'y0', 0.0)));
+
+state = physics.dualRodAdvance(state, params, dt);
+out = physics.dualRodOutputs(state, params);
+
+state.t = prevT + dt;
+state.modelType = "rail";
+state.templateId = "R5";
+state.xCenter = double(out.xCenter);
+state.vCenter = double(out.vCenter);
+state.xCmMass = double(out.xCmMass);
+state.vCmMass = double(out.vCmMass);
+
+% 兼容单棒链路：x/vx 使用几何中心
+state.x = state.xCenter;
+state.y = yCenter;
+state.vx = state.vCenter;
+state.vy = 0.0;
+
+if ~isfield(state, 'traj') || ~isnumeric(state.traj) || size(state.traj, 2) ~= 2
+    state.traj = [state.xCenter, state.y];
+end
+if ~isfield(state, 'trajA') || ~isnumeric(state.trajA) || size(state.trajA, 2) ~= 2
+    state.trajA = [double(state.xA), state.y];
+end
+if ~isfield(state, 'trajB') || ~isnumeric(state.trajB) || size(state.trajB, 2) ~= 2
+    state.trajB = [double(state.xB), state.y];
+end
+state.traj(end+1, :) = [state.xCenter, state.y];
+state.trajA(end+1, :) = [double(state.xA), state.y];
+state.trajB(end+1, :) = [double(state.xB), state.y];
+
+state.stepCount = double(pickField(state, 'stepCount', 0)) + 1;
+state.mode = "r5_" + lower(string(out.mode));
+state.inField = logical(out.inField);
+state.iBranch = double(out.current);
+state.aBranch = (state.vCenter - prevCenterV) / max(double(dt), 1e-12);
+
+state.epsilon = double(out.epsilon);
+state.current = double(out.current);
+state.fMagA = double(out.fMagA);
+state.fMagB = double(out.fMagB);
+state.fMag = double(out.fMagSum);
+state.pElec = double(out.pElec);
+state.pMech = double(out.pMech);
+state.overlap = double(out.overlap);
+state.dOverlap = double(out.dOverlap);
+state.Leff = double(out.Leff);
+
+state.qHeatR = max(0.0, double(pickField(state, 'qHeatR', 0.0)));
+state.qHeatColl = max(0.0, double(pickField(state, 'qHeatColl', 0.0)));
+state.qHeat = state.qHeatR + state.qHeatColl;
+state.qColl = state.qHeatColl;
+
+state.rail = struct( ...
+    'elementType', "R", ...
+    'inField', logical(out.inField), ...
+    'mode', string(out.mode), ...
+    'xA', double(state.xA), ...
+    'xB', double(state.xB), ...
+    'xCenter', double(state.xCenter), ...
+    'vA', double(state.vA), ...
+    'vB', double(state.vB), ...
+    'vCenter', double(state.vCenter), ...
+    'epsilon', double(out.epsilon), ...
+    'current', double(out.current), ...
+    'fMagA', double(out.fMagA), ...
+    'fMagB', double(out.fMagB), ...
+    'fMagSum', double(out.fMagSum), ...
+    'pElec', double(out.pElec), ...
+    'qHeat', double(state.qHeat), ...
+    'qHeatR', double(state.qHeatR), ...
+    'qHeatColl', double(state.qHeatColl) ...
+);
 end
 
 function state = stepR8FrameState(state, params, dt)
@@ -622,6 +723,14 @@ function tf = isR8Template(params)
 % 说明
 %   - 本地函数仅做委托，统一规则在 engine.helpers.isR8Template。
 tf = engine.helpers.isR8Template(params);
+end
+
+function tf = isR5Template(params)
+%ISR5TEMPLATE  判断当前是否 R5 模板（兼容封装）
+%
+% 说明
+%   - 本地函数仅做委托，统一规则在 engine.helpers.isR5Template。
+tf = engine.helpers.isR5Template(params);
 end
 
 function modelType = resolveModelType(params)

@@ -1,6 +1,25 @@
 ﻿# 更新日志
 
 ## 2026-02-12
+- 新增：R5 独立模板接入（`src/+templates/+defs/R5.m` + `registry` + `applyTemplatePreset`），并在 `apps/MainApp.m` 增加 `R5_for_test` 参数组件分配。
+- 新增：R5 物理真源 `src/+physics/dualRodOutputs.m`（模式/合电动势/电流/安培力）与 `src/+physics/dualRodAdvance.m`（事件驱动推进、碰撞映射、热量累计）。
+- 引擎：`src/+engine/reset.m` 新增 `resetR5DualState`，`src/+engine/step.m` 新增 `stepR5DualState`，并通过 `src/+engine/+helpers/isR5Template.m` 统一模板判定。
+- 参数：`src/+params/validate.m` 新增 R5 联动规则（A/B 参数归一化、`xB0>=xA0`、`rho` 约束、兼容字段回填）。
+- 输出：`src/+control/mergeRailOutputs.m` 新增 R5 输出映射（中心量 + 合量 + `qCollOut`）。
+- 渲染：`src/+viz/renderScene.m` 新增 R5 双棒场景分支（A/B 两棒同屏）；`src/+viz/renderPlots.m` 新增 R5 3x2 曲线布局（A/B/中心 + 电学 + 热量）。
+- UI：`m/R5_for_test.m` 补齐 payload 组件协议（`Value/getPayload/setPayload/setOutputs/PayloadChanged`）与 A/B 导体切换编辑逻辑。
+- 文档：新增 `docs/参考手册/10_R5双导体棒模板接入说明.md`，并更新 `docs/参考手册/00_索引.md`。
+- 测试：新增 `tests/smoke_r5_minimal_loop.m`，覆盖 R5 模板切换、参数校验、reset/step、输出映射与渲染最小闭环。
+- 修复：`src/+templates/applyTemplatePreset.m` 中 `applyR8Preset/applyR5Preset` 的函数边界错误，解决 `smoke_r5_minimal_loop` 报错“未定义函数 applyR5Preset”。
+- 对齐：`m/R5_for_test.m` 按 `R5_V2` 口径移除“匀速/阻尼”模式输入，新增 `rho`（恢复系数）输入，并强制 `driveEnabled=true`。
+- 对齐：`m/R5_for_test.m` 的边界输入不再因 `bounded` 被禁用，满足“除输出区外均可输入”规则。
+- 对齐：`src/+params/validate.m`、`src/+physics/dualRodOutputs.m`、`src/+physics/dualRodAdvance.m`、`src/+templates/applyTemplatePreset.m` 的 R5 分支移除 `driveEnabled=false` 演示语义，统一为动力学公式链路（`Fdrive=0` 时自然退化）。
+- 调整：`src/+viz/renderScene.m` 的 R5 分支不再绘制左侧电阻符号，仅保留双棒/导轨与相关箭头显示。
+- 修复：`src/+viz/renderPlots.m` 中 R5 历史采样/追加/绘制函数块的误嵌套，恢复 R5 曲线区正常出图（x/v/I/epsilon/F/Q）。
+- 调整：R5 默认参数改为 `bounded=false`（无界）且 `showDriveForce/showAmpereForce=false`（力箭头默认关闭），对应 `m/R5_for_test.m` 与 `src/+templates/applyTemplatePreset.m`。
+- 调整：`src/+viz/renderScene.m` 的 R5 电流箭头方向口径修正（右棒按 current/epsilon 同号映射），用于匹配“B 离场阻碍离场”阶段的顺时针显示。
+- 公式：`src/+physics/dualRodOutputs.m` 的 `Leff` 改为按导体段与磁场 y 边界交叠计算：`max(0, min(y0+L/2,yMax)-max(y0-L/2,yMin))`（R5 分支）。
+- 修复：`src/+ui/render.m` 改为每帧执行曲线渲染链路，持续累计历史采样，解决“在场景页播放后切到曲线页出现空白”的问题。
 - 测试：`tests/smoke.m` 批跑入口改为基于 `nargout` 判定是否接收返回值，修复中文 MATLAB 环境下“输出参数太多”文本不匹配导致的误失败。
 - 测试：重写 `tests/smoke.m` 批量入口，改为按 `smoke_*.m` 函数名 `feval` 执行，兼容“有返回值/无返回值”两类 smoke 用例，并在失败时统一汇总并抛错。
 - 重构：新增 `src/+engine/+helpers/attachRailOutputsCommon.m`，统一 R/C/L + R8 输出挂载；`src/+engine/step.m` 与 `src/+engine/reset.m` 的 `attachRailOutputs` 改为薄封装委托，减少双份公式维护风险。

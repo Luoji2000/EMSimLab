@@ -7,9 +7,8 @@
 %   state : 当前仿真状态结构
 %
 % 行为
-%   1) 按当前 CenterTabs 焦点选择渲染目标
-%   2) 场景页：仅渲染场景
-%   3) 曲线页：仅渲染曲线
+%   1) 按当前 CenterTabs 焦点决定是否渲染场景
+%   2) 曲线渲染每帧都执行，用于持续累计历史（避免切页后曲线空白）
 %   3) 任一子渲染失败仅写日志，不中断主流程
 %
 % 设计说明
@@ -22,6 +21,11 @@ arguments
 end
 
 [shouldRenderSceneNow, shouldRenderPlotsNow] = resolveRenderTargets(app);
+
+% 曲线区历史采样需要持续累计：
+% 即使当前停留在“场景”页，也要执行一次曲线渲染链路，
+% 这样切回“曲线”页时可直接看到完整历史而不是单点空白。
+shouldRenderPlotsNow = shouldRenderPlotsNow || shouldRenderSceneNow;
 
 if shouldRenderSceneNow && hasFunction('viz.renderScene')
     try

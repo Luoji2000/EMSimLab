@@ -27,6 +27,24 @@ if ~startsWith(modelType, "rail")
     return;
 end
 
+tpl = upper(strtrim(string(pickField(p, 'templateId', pickField(state, 'templateId', "")))));
+if tpl == "R5"
+    p.epsilonOut = double(pickField(state, 'epsilon', 0.0));
+    p.currentOut = double(pickField(state, 'current', 0.0));
+    p.fMagOut = double(pickField(state, 'fMag', 0.0));
+    p.pElecOut = double(pickField(state, 'pElec', 0.0));
+    p.xOut = double(pickField(state, 'xCenter', pickField(state, 'x', 0.0)));
+    p.vOut = double(pickField(state, 'vCenter', pickField(state, 'vx', 0.0)));
+    p.qHeatOut = double(pickField(state, 'qHeat', 0.0));
+    p.qCollOut = double(pickField(state, 'qHeatColl', pickField(state, 'qColl', 0.0)));
+    p.xAOut = double(pickField(state, 'xA', 0.0));
+    p.xBOut = double(pickField(state, 'xB', 0.0));
+    p.vAOut = double(pickField(state, 'vA', 0.0));
+    p.vBOut = double(pickField(state, 'vB', 0.0));
+    p.modeOut = string(pickField(state, 'mode', "r5_s0"));
+    return;
+end
+
 p.epsilonOut = double(pickField(state, 'epsilon', 0.0));
 p.currentOut = double(pickField(state, 'current', 0.0));
 p.fMagOut = double(pickField(state, 'fMag', 0.0));

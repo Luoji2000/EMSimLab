@@ -18,6 +18,8 @@ if tpl == "M4"
     p = applySelectorPreset(p);
 elseif tpl == "M5"
     p = applyMassSpecPreset(p);
+elseif tpl == "R5"
+    p = applyR5Preset(p);
 elseif tpl == "R8"
     p = applyR8Preset(p);
 elseif startsWith(tpl, "R")
@@ -66,6 +68,71 @@ p.Fdrive = 0.0;
 p.xMin = 0.0;
 p.xMax = 4.0;
 p.autoFollow = false;
+
+if isfield(p, 'showCurrent')
+    p.showCurrent = true;
+end
+if isfield(p, 'showDriveForce')
+    p.showDriveForce = false;
+end
+if isfield(p, 'showAmpereForce')
+    p.showAmpereForce = false;
+end
+end
+
+function p = applyR5Preset(p)
+%APPLYR5PRESET  R5 双导体棒模板预设
+%
+% 场景语义
+%   1) 两根导体棒分别记为 A（左）与 B（右），主状态约束 xB>=xA
+%   2) 双棒共享同一回路，电流按“总电阻 RA+RB”计算
+%   3) 输出口径默认展示中心量（xCenter/vCenter）与合量（epsilon/I/Fmag/Q）
+p.modelType = "rail";
+p.templateId = "R5";
+p.elementType = "R";
+p.loopClosed = true;
+p.bounded = false;
+
+% A/B 双棒参数（首版默认）
+p.LA = 2.0;
+p.LB = 2.0;
+p.xA0 = 0.0;
+p.xB0 = 2.0;
+p.vA0 = 0.0;
+p.vB0 = 1.0;
+p.RA = 1.0;
+p.RB = 1.0;
+p.mA = 1.0;
+p.mB = 1.0;
+p.FdriveA = 0.0;
+p.FdriveB = 0.0;
+p.rho = 0.8;
+p.driveEnabled = true;
+
+% 兼容字段（供旧链路与通用渲染兜底）
+p.L = min(p.LA, p.LB);
+p.R = p.RA + p.RB;
+p.m = 0.5 * (p.mA + p.mB);
+p.x0 = 0.5 * (p.xA0 + p.xB0);
+p.v0 = 0.5 * (p.vA0 + p.vB0);
+p.Fdrive = p.FdriveA + p.FdriveB;
+p.y0 = 0.0;
+
+% 磁场区域默认值
+p.xMin = 0.0;
+p.xMax = 4.0;
+p.yMin = -1.0;
+p.yMax = 1.0;
+
+% 输出区默认值
+p.epsilonOut = 0.0;
+p.currentOut = 0.0;
+p.fMagOut = 0.0;
+p.xOut = p.x0;
+p.vOut = p.v0;
+p.qHeatOut = 0.0;
+p.pElecOut = 0.0;
+p.qCollOut = 0.0;
 
 if isfield(p, 'showCurrent')
     p.showCurrent = true;

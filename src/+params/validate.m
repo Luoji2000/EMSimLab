@@ -203,7 +203,7 @@ end
 end
 
 function p = applyRailRules(p)
-%APPLYRAILRULES R 系列参数联动规则（含 R2LC 与 R8）
+%APPLYRAILRULES R 系列参数联动规则（含 R2LC、R8、R5）
 %
 % 输入
 %   p (1,1) struct
@@ -217,7 +217,8 @@ function p = applyRailRules(p)
 %   1) elementType 归一化到 R/C/L
 %   2) C/L 分支做数值安全下界（避免除零/奇异）
 %   3) R8 分支应用条带磁场语义约束
-%   4) C/L 分支统一映射到 R2 语义（闭路 + 驱动）
+%   4) R5 分支应用双棒语义约束（A/B 参数 + 兼容字段）
+%   5) C/L 分支统一映射到 R2 语义（闭路 + 驱动）
 if hasField(p, "elementType")
     p.elementType = upper(strtrim(string(p.elementType)));
 else
@@ -298,6 +299,56 @@ if hasField(p, "templateId") && strcmpi(strtrim(string(p.templateId)), "R8")
         if hasField(p, "showAmpereForce")
             p.showAmpereForce = false;
         end
+    end
+end
+
+% R5：双导体棒模型（A/B 双棒 + 合量输出）
+if hasField(p, "templateId") && strcmpi(strtrim(string(p.templateId)), "R5")
+    p.modelType = "rail";
+    p.templateId = "R5";
+    p.elementType = "R";
+    if hasField(p, "loopClosed")
+        p.loopClosed = true;
+    else
+        p.loopClosed = true;
+    end
+
+    p.LA = max(toDouble(pickFieldR8(p, "LA", pickFieldR8(p, "L", 1.0)), 1.0), 1e-9);
+    p.LB = max(toDouble(pickFieldR8(p, "LB", pickFieldR8(p, "L", 1.0)), 1.0), 1e-9);
+
+    p.xA0 = toDouble(pickFieldR8(p, "xA0", pickFieldR8(p, "x0", 0.0)), 0.0);
+    p.xB0 = toDouble(pickFieldR8(p, "xB0", p.xA0 + 1.0), p.xA0 + 1.0);
+    if p.xB0 < p.xA0
+        p.xB0 = p.xA0;
+    end
+
+    p.vA0 = toDouble(pickFieldR8(p, "vA0", pickFieldR8(p, "v0", 0.0)), 0.0);
+    p.vB0 = toDouble(pickFieldR8(p, "vB0", pickFieldR8(p, "v0", 0.0)), 0.0);
+
+    p.RA = max(toDouble(pickFieldR8(p, "RA", pickFieldR8(p, "R", 1.0)), 1.0), 1e-12);
+    p.RB = max(toDouble(pickFieldR8(p, "RB", pickFieldR8(p, "R", 1.0)), 1.0), 1e-12);
+    p.mA = max(toDouble(pickFieldR8(p, "mA", pickFieldR8(p, "m", 1.0)), 1.0), 1e-12);
+    p.mB = max(toDouble(pickFieldR8(p, "mB", pickFieldR8(p, "m", 1.0)), 1.0), 1e-12);
+    p.rho = min(max(toDouble(pickFieldR8(p, "rho", 1.0), 1.0), 0.0), 1.0);
+
+    % R5_V2 口径：不再区分匀速/阻尼模式，统一走动力学推进
+    p.driveEnabled = true;
+    p.FdriveA = toDouble(pickFieldR8(p, "FdriveA", pickFieldR8(p, "Fdrive", 0.0)), 0.0);
+    p.FdriveB = toDouble(pickFieldR8(p, "FdriveB", pickFieldR8(p, "Fdrive", 0.0)), 0.0);
+
+    % 兼容字段：保持通用链路可读
+    p.L = min(p.LA, p.LB);
+    p.R = p.RA + p.RB;
+    p.m = 0.5 * (p.mA + p.mB);
+    p.x0 = 0.5 * (p.xA0 + p.xB0);
+    p.y0 = 0.0;
+    p.v0 = 0.5 * (p.vA0 + p.vB0);
+    p.Fdrive = p.FdriveA + p.FdriveB;
+
+    if hasField(p, "qCollOut")
+        p.qCollOut = max(toDouble(p.qCollOut, 0.0), 0.0);
+    else
+        p.qCollOut = 0.0;
     end
 end
 

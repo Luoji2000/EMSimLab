@@ -39,7 +39,7 @@ if ~isstruct(paramsIn)
     return;
 end
 
-keys = ["epsilonOut","currentOut","xOut","vOut","fMagOut","qHeatOut","pElecOut","qOverMOut"];
+keys = ["epsilonOut","currentOut","xOut","vOut","fMagOut","qHeatOut","pElecOut","qCollOut","qOverMOut"];
 for i = 1:numel(keys)
     key = char(keys(i));
     if isfield(paramsIn, key)

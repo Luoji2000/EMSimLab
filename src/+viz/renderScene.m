@@ -223,15 +223,25 @@ token = upper(strtrim(string(pickField(p, 'templateId', pickField(state, 'templa
 tf = token == "R8";
 end
 
+function tf = isR5Template(p, state)
+%ISR5TEMPLATE  判断当前是否 R5 双导体棒模板
+token = upper(strtrim(string(pickField(p, 'templateId', pickField(state, 'templateId', "")))));
+tf = token == "R5";
+end
+
 function cache = hideRailOnlyHandles(cache)
 %HIDERAILONLYHANDLES  在粒子模型下隐藏导轨专用图元
 hideHandle(cache.hRailTop);
 hideHandle(cache.hRailBottom);
 hideHandle(cache.hRod);
+hideHandle(cache.hRodB);
 hideHandle(cache.hResistor);
 hideHandle(cache.hCurrentArrow);
+hideHandle(cache.hCurrentArrowB);
 hideHandle(cache.hDriveArrow);
+hideHandle(cache.hDriveArrowB);
 hideHandle(cache.hAmpereArrow);
+hideHandle(cache.hAmpereArrowB);
 end
 
 function cache = hideMassSpecHandles(cache)
@@ -263,10 +273,14 @@ cache = struct( ...
     'hRailTop', [], ...
     'hRailBottom', [], ...
     'hRod', [], ...
+    'hRodB', [], ...
     'hResistor', [], ...
     'hCurrentArrow', [], ...
+    'hCurrentArrowB', [], ...
     'hDriveArrow', [], ...
+    'hDriveArrowB', [], ...
     'hAmpereArrow', [], ...
+    'hAmpereArrowB', [], ...
     'hForceElec', [], ...
     'hForceMag', [], ...
     'hSelectorPlateTop', [], ...
@@ -338,6 +352,8 @@ end
 if modelType == "rail"
     if isR8Template(p, state)
         titleText = string(sprintf('线框在磁场中的运动（t = %.3f s）', double(tNow)));
+    elseif isR5Template(p, state)
+        titleText = string(sprintf('双导体棒导轨场景（t = %.3f s）', double(tNow)));
     else
         titleText = string(sprintf('导轨滑杆场景（t = %.3f s）', double(tNow)));
     end
@@ -1029,7 +1045,190 @@ yTop = yCenter + halfL;
 yBottom = yCenter - halfL;
 xRod = double(pickField(state, 'x', 0.0));
 xLim = ax.XLim;
+isR5 = isR5Template(p, state);
 isR8 = isR8Template(p, state);
+
+if isR5
+    % R5：双导体棒渲染（A/B 同屏）
+    xA = double(pickField(state, 'xA', pickField(p, 'xA0', xRod - 1.0)));
+    xB = double(pickField(state, 'xB', pickField(p, 'xB0', xRod + 1.0)));
+    if xB < xA
+        xB = xA;
+    end
+    xCenter = 0.5 * (xA + xB);
+    Lpair = min( ...
+        max(1e-3, double(pickField(p, 'LA', L))), ...
+        max(1e-3, double(pickField(p, 'LB', L))));
+    yCenter = double(pickField(state, 'y', pickField(p, 'y0', 0.0)));
+    yTop = yCenter + 0.5 * Lpair;
+    yBottom = yCenter - 0.5 * Lpair;
+
+    % 上下导轨
+    if ~isLiveHandle(cache.hRailTop)
+        cache.hRailTop = line('Parent', ax, ...
+            'XData', xLim, ...
+            'YData', [yTop, yTop], ...
+            'Color', [0.10, 0.10, 0.10], ...
+            'LineWidth', 2.4);
+    else
+        set(cache.hRailTop, 'XData', xLim, 'YData', [yTop, yTop], 'Visible', 'on');
+    end
+    if ~isLiveHandle(cache.hRailBottom)
+        cache.hRailBottom = line('Parent', ax, ...
+            'XData', xLim, ...
+            'YData', [yBottom, yBottom], ...
+            'Color', [0.10, 0.10, 0.10], ...
+            'LineWidth', 2.4);
+    else
+        set(cache.hRailBottom, 'XData', xLim, 'YData', [yBottom, yBottom], 'Visible', 'on');
+    end
+
+    % A/B 两根导体棒
+    if ~isLiveHandle(cache.hRod)
+        cache.hRod = line('Parent', ax, ...
+            'XData', [xA, xA], ...
+            'YData', [yBottom, yTop], ...
+            'Color', [0.95, 0.20, 0.15], ...
+            'LineWidth', 4.0);
+    else
+        set(cache.hRod, 'XData', [xA, xA], 'YData', [yBottom, yTop], 'Visible', 'on');
+    end
+    if ~isLiveHandle(cache.hRodB)
+        cache.hRodB = line('Parent', ax, ...
+            'XData', [xB, xB], ...
+            'YData', [yBottom, yTop], ...
+            'Color', [0.15, 0.55, 0.92], ...
+            'LineWidth', 4.0);
+    else
+        set(cache.hRodB, 'XData', [xB, xB], 'YData', [yBottom, yTop], 'Visible', 'on');
+    end
+    info.rail_visible = true;
+    info.rod_visible = true;
+
+    % R5 视觉约定：场景中不绘制左侧电阻符号
+    hideHandle(cache.hResistor);
+    info.resistor_visible = false;
+    info.element_visible = false;
+    info.element_type = "none";
+
+    % 中心轨迹（默认）
+    showTrail = logicalField(p, 'showTrail', true);
+    traj = pickField(state, 'traj', [xCenter, yCenter]);
+    if showTrail && isnumeric(traj) && size(traj, 2) == 2 && size(traj, 1) >= 1
+        trajDraw = trimTrailForRender(traj, 1600);
+        if ~isLiveHandle(cache.hTrail)
+            cache.hTrail = line('Parent', ax, ...
+                'XData', trajDraw(:, 1), ...
+                'YData', trajDraw(:, 2), ...
+                'LineStyle', '-', ...
+                'Color', [0.05, 0.75, 0.25], ...
+                'LineWidth', 2.0);
+        else
+            set(cache.hTrail, 'XData', trajDraw(:, 1), 'YData', trajDraw(:, 2), 'Visible', 'on');
+        end
+        info.trail_visible = true;
+    else
+        hideHandle(cache.hTrail);
+    end
+
+    % 速度箭头：用中心速度，放置在上导轨外侧
+    stateCenter = state;
+    stateCenter.vx = double(pickField(state, 'vCenter', pickField(state, 'vx', 0.0)));
+    [cache, ~] = updateRailVelocityArrow(ax, cache, stateCenter, p, viewSpan, xCenter, yTop, Lpair);
+
+    % 电流方向：画在右棒上，口径与普通导轨一致（current>0 时向下）
+    showCurrent = logicalField(p, 'showCurrent', false);
+    currentVal = double(pickField(state, 'current', 0.0));
+    epsilonVal = double(pickField(state, 'epsilon', 0.0));
+    currentSource = "none";
+    dirY = 0;
+    if abs(currentVal) > 1e-12
+        % R5 方向口径：current>0 记为右棒向上，current<0 记为右棒向下
+        % 该口径下，B 向右离场阶段（楞次定律）可表现为顺时针（右棒向下）。
+        dirY = sign(currentVal);
+        currentSource = "current";
+    elseif abs(epsilonVal) > 1e-12
+        dirY = sign(epsilonVal);
+        currentSource = "epsilon";
+    end
+    if showCurrent && dirY ~= 0
+        arrLen = 0.55 * Lpair;
+        if ~isLiveHandle(cache.hCurrentArrow)
+            cache.hCurrentArrow = quiver(ax, xB, yCenter, 0, dirY * arrLen, 0, ...
+                'AutoScale', 'off', ...
+                'Color', [0.20, 0.55, 0.98], ...
+                'LineWidth', 2.0, ...
+                'MaxHeadSize', 1.2);
+        else
+            set(cache.hCurrentArrow, ...
+                'XData', xB, ...
+                'YData', yCenter, ...
+                'UData', 0, ...
+                'VData', dirY * arrLen, ...
+                'Visible', 'on');
+        end
+        info.show_current = true;
+        info.current_source = currentSource;
+    else
+        hideHandle(cache.hCurrentArrow);
+    end
+    hideHandle(cache.hCurrentArrowB);
+
+    % 外力箭头：显示合外力
+    showDrive = logicalField(p, 'showDriveForce', false) && logicalField(p, 'driveEnabled', false);
+    fDriveA = double(pickField(p, 'FdriveA', pickField(p, 'Fdrive', 0.0)));
+    fDriveB = double(pickField(p, 'FdriveB', pickField(p, 'Fdrive', 0.0)));
+    fDriveSum = fDriveA + fDriveB;
+    if showDrive && abs(fDriveSum) > 1e-12
+        dirX = sign(fDriveSum);
+        arrLen = min(max(0.12 * viewSpan, 0.25 * Lpair), 0.40 * viewSpan);
+        if ~isLiveHandle(cache.hDriveArrow)
+            cache.hDriveArrow = quiver(ax, xCenter, yCenter, dirX * arrLen, 0, 0, ...
+                'AutoScale', 'off', ...
+                'Color', [0.96, 0.56, 0.16], ...
+                'LineWidth', 2.0, ...
+                'MaxHeadSize', 1.2);
+        else
+            set(cache.hDriveArrow, ...
+                'XData', xCenter, ...
+                'YData', yCenter, ...
+                'UData', dirX * arrLen, ...
+                'VData', 0, ...
+                'Visible', 'on');
+        end
+        info.show_drive_force = true;
+    else
+        hideHandle(cache.hDriveArrow);
+    end
+    hideHandle(cache.hDriveArrowB);
+
+    % 安培力箭头：显示合安培力
+    showAmpere = logicalField(p, 'showAmpereForce', false);
+    fMag = double(pickField(state, 'fMag', 0.0));
+    if showAmpere && abs(fMag) > 1e-12
+        dirX = sign(fMag);
+        arrLen = min(max(0.10 * viewSpan, 0.20 * Lpair), 0.35 * viewSpan);
+        if ~isLiveHandle(cache.hAmpereArrow)
+            cache.hAmpereArrow = quiver(ax, xCenter, yCenter, dirX * arrLen, 0, 0, ...
+                'AutoScale', 'off', ...
+                'Color', [0.70, 0.28, 0.95], ...
+                'LineWidth', 2.0, ...
+                'MaxHeadSize', 1.2);
+        else
+            set(cache.hAmpereArrow, ...
+                'XData', xCenter, ...
+                'YData', yCenter, ...
+                'UData', dirX * arrLen, ...
+                'VData', 0, ...
+                'Visible', 'on');
+        end
+        info.show_ampere_force = true;
+    else
+        hideHandle(cache.hAmpereArrow);
+    end
+    hideHandle(cache.hAmpereArrowB);
+    return;
+end
 
 if isR8
     [loopW, loopH] = readR8LoopSize(p, L);
@@ -1054,7 +1253,11 @@ if isR8
     % R8 不显示导轨与左侧回路元件，仅显示矩形线框
     hideHandle(cache.hRailTop);
     hideHandle(cache.hRailBottom);
+    hideHandle(cache.hRodB);
     hideHandle(cache.hResistor);
+    hideHandle(cache.hCurrentArrowB);
+    hideHandle(cache.hDriveArrowB);
+    hideHandle(cache.hAmpereArrowB);
     info.resistor_visible = false;
     info.element_visible = false;
     info.element_type = "R";
@@ -1189,6 +1392,11 @@ if isR8
     end
     return;
 end
+
+hideHandle(cache.hRodB);
+hideHandle(cache.hCurrentArrowB);
+hideHandle(cache.hDriveArrowB);
+hideHandle(cache.hAmpereArrowB);
 
 % 上导轨
 if ~isLiveHandle(cache.hRailTop)

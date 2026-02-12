@@ -3,7 +3,7 @@
 %
 % 兼容策略
 %   - R1/R2/R3/R4 统一映射到 R
-%   - R8 为独立模板，不参与映射
+%   - R5/R8 为独立模板，不参与映射
 
 list = templates.registry();
 if isempty(list)

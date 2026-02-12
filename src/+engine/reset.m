@@ -104,7 +104,11 @@ function state = resetRailState(state, params)
 %     导轨初始状态，包含导轨专有字段（qHeat/iBranch/aBranch）。
 %
 % 说明
-%   - R8 模板会转入 resetR8FrameState 专用分支。
+%   - R5/R8 模板会转入各自专用重置分支。
+if isR5Template(params)
+    state = resetR5DualState(state, params);
+    return;
+end
 if isR8Template(params)
     state = resetR8FrameState(state, params);
     return;
@@ -198,6 +202,89 @@ else
 end
 
 state = attachR8Outputs(state, params, out, double(pickField(params, 'Fdrive', 0.0)));
+end
+
+function state = resetR5DualState(state, params)
+%RESETR5DUALSTATE  重置 R5 双导体棒状态（A/B 双棒 + 中心量）
+%
+% 输入
+%   state  (1,1) struct
+%     历史状态（允许为空）。
+%   params (1,1) struct
+%     R5 参数结构（xA0/xB0/vA0/vB0/mA/mB/RA/RB/rho 等）。
+%
+% 输出
+%   state  (1,1) struct
+%     R5 初始状态，包含 A/B 棒状态、中心量、电学输出与热量累计字段。
+state.t = 0.0;
+state.modelType = "rail";
+state.templateId = "R5";
+
+state.xA = double(pickField(params, 'xA0', 0.0));
+state.xB = double(pickField(params, 'xB0', 2.0));
+if state.xB < state.xA
+    state.xB = state.xA;
+end
+state.vA = double(pickField(params, 'vA0', 0.0));
+state.vB = double(pickField(params, 'vB0', 1.0));
+
+out = physics.dualRodOutputs(state, params);
+state.xCenter = double(out.xCenter);
+state.vCenter = double(out.vCenter);
+state.xCmMass = double(out.xCmMass);
+state.vCmMass = double(out.vCmMass);
+
+% 兼容单棒链路字段：x/vx 表示几何中心
+state.x = state.xCenter;
+state.y = double(pickField(params, 'y0', 0.0));
+state.vx = state.vCenter;
+state.vy = 0.0;
+
+state.traj = [state.xCenter, state.y];
+state.trajA = [state.xA, state.y];
+state.trajB = [state.xB, state.y];
+state.stepCount = 0;
+
+state.qHeatR = 0.0;
+state.qHeatColl = 0.0;
+state.qHeat = 0.0;
+state.qColl = 0.0;
+state.iBranch = 0.0;
+state.aBranch = 0.0;
+
+state.mode = "r5_" + lower(string(out.mode));
+state.inField = logical(out.inField);
+state.epsilon = double(out.epsilon);
+state.current = double(out.current);
+state.fMagA = double(out.fMagA);
+state.fMagB = double(out.fMagB);
+state.fMag = double(out.fMagSum);
+state.pElec = double(out.pElec);
+state.pMech = double(out.pMech);
+state.overlap = double(out.overlap);
+state.dOverlap = double(out.dOverlap);
+state.Leff = double(out.Leff);
+
+state.rail = struct( ...
+    'elementType', "R", ...
+    'inField', logical(out.inField), ...
+    'mode', string(out.mode), ...
+    'xA', double(state.xA), ...
+    'xB', double(state.xB), ...
+    'xCenter', double(state.xCenter), ...
+    'vA', double(state.vA), ...
+    'vB', double(state.vB), ...
+    'vCenter', double(state.vCenter), ...
+    'epsilon', double(out.epsilon), ...
+    'current', double(out.current), ...
+    'fMagA', double(out.fMagA), ...
+    'fMagB', double(out.fMagB), ...
+    'fMagSum', double(out.fMagSum), ...
+    'pElec', double(out.pElec), ...
+    'qHeat', double(state.qHeat), ...
+    'qHeatR', double(state.qHeatR), ...
+    'qHeatColl', double(state.qHeatColl) ...
+);
 end
 
 %% 速度选择器模型（M4）重置
@@ -399,6 +486,14 @@ function tf = isR8Template(params)
 % 说明
 %   - 本地函数仅做委托，统一规则在 engine.helpers.isR8Template。
 tf = engine.helpers.isR8Template(params);
+end
+
+function tf = isR5Template(params)
+%ISR5TEMPLATE  判断当前是否 R5 模板（兼容封装）
+%
+% 说明
+%   - 本地函数仅做委托，统一规则在 engine.helpers.isR5Template。
+tf = engine.helpers.isR5Template(params);
 end
 
 function modelType = resolveModelType(params)
