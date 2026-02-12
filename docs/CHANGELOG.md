@@ -1,6 +1,10 @@
 ﻿# 更新日志
 
 ## 2026-02-12
+- 规范：补齐 `src/+engine/step.m`、`src/+engine/reset.m` 及 `src/+engine/+helpers/*.m` 的函数注释模板（用途/输入/输出/说明），局部临时函数同步采用同一规范。
+- 重构：新增 `src/+engine/+helpers/isR8Template.m`、`src/+engine/+helpers/resolveRailElement.m`、`src/+engine/+helpers/resolveModelType.m`，统一模板与模型判定逻辑；`src/+engine/step.m` 与 `src/+engine/reset.m` 对应本地函数改为委托共享实现（行为不变）。
+- 文档：新增 `docs/参考手册/09_引擎共享助手与去重规范.md`，并在 `docs/参考手册/00_索引.md` 增加入口。
+- 重构：新增 `src/+engine/+helpers/attachR8Outputs.m`，统一 R8 输出挂载逻辑；`src/+engine/step.m` 与 `src/+engine/reset.m` 的 `attachR8Outputs` 改为委托共享实现，行为保持不变。
 - 新增：R2LC 核心物理核接入（同一 `R` 模板内按 `elementType=R/C/L` 切换），电容分支采用等效质量递推，电感分支采用闭式旋转递推。
 - 新增：`src/+physics/railAdvanceCapacitor.m` 与 `src/+physics/railAdvanceInductor.m`，将 R2LC 核心公式从流程控制中抽离。
 - 重构：`src/+engine/reset.m` 与 `src/+engine/step.m` 的 rail 分支升级为 R/C/L 三分支，补齐 `iBranch/aBranch` 状态与输出挂载。

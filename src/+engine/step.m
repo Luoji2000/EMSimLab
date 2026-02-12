@@ -2,6 +2,9 @@
 %% 入口：按模型分发步进
 %STEP  推进一步（按 modelType 分发）
 %
+% 用途
+%   - 统一作为引擎单步推进总入口，按模型类型分发到对应子推进函数。
+%
 % 输入
 %   state (1,1) struct : 当前状态
 %   params (1,1) struct : 参数结构
@@ -39,7 +42,26 @@ end
 
 %% 粒子模型（M1/M2/M5）
 function state = stepParticleState(state, params, dt)
-%STEPPARTICLESTATE  M 系列粒子推进
+%STEPPARTICLESTATE  M 系列粒子单步推进入口
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state  (1,1) struct
+%     当前粒子状态，至少包含 x/y/vx/vy（缺失时会在内部补齐）。
+%   params (1,1) struct
+%     当前参数结构，包含 q/m/B/bounded/bounds 等字段。
+%   dt     (1,1) double
+%     本次推进步长（秒）。
+%
+% 输出
+%   state  (1,1) struct
+%     推进后的粒子状态，含位置、速度、轨迹、模式与 inField 标记。
+%
+% 说明
+%   - 无界模式：整段解析推进。
+%   - 有界模式：使用“分段推进 + 跨界二分”保证进出场时刻稳定。
 state = ensureParticleState(state, params);
 
 omega = cyclotronOmega(params);
@@ -74,7 +96,24 @@ state.mode = modeText;
 end
 
 function state = ensureParticleState(state, params)
-%ENSUREPARTICLESTATE  补齐粒子状态字段
+%ENSUREPARTICLESTATE  补齐粒子状态基础字段
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state  (1,1) struct
+%     可能不完整的粒子状态结构。
+%   params (1,1) struct
+%     参数结构，用于必要时触发 reset 回填默认状态。
+%
+% 输出
+%   state  (1,1) struct
+%     字段完整的粒子状态，保证后续 step 可安全运行。
+%
+% 说明
+%   - 当核心字段缺失时，回退调用 engine.reset 统一补齐。
+%   - 保证 traj 为 N×2 数值矩阵、stepCount 为标量计数。
 if ~isfield(state, 'x') || ~isfield(state, 'y') || ~isfield(state, 'vx') || ~isfield(state, 'vy')
     state = engine.reset(state, params);
 end
@@ -91,7 +130,26 @@ end
 
 %% 速度选择器模型（M4）
 function state = stepSelectorState(state, params, dt)
-%STEPSELECTORSTATE  M4 速度选择器推进（交叉场）
+%STEPSELECTORSTATE  M4 速度选择器单步推进（交叉场）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state  (1,1) struct
+%     当前速度选择器状态（x/y/vx/vy/traj 等）。
+%   params (1,1) struct
+%     速度选择器参数（Ey/B/q/m/bounds 等）。
+%   dt     (1,1) double
+%     本次推进步长（秒）。
+%
+% 输出
+%   state  (1,1) struct
+%     推进后的选择器状态，并附加 q/m 与受力分量输出字段。
+%
+% 说明
+%   - 场内调用交叉场解析核。
+%   - 场外保持匀速直线推进。
 state = ensureSelectorState(state, params);
 
 rOld = [double(state.x); double(state.y)];
@@ -127,6 +185,22 @@ end
 
 function state = ensureSelectorState(state, params)
 %ENSURESELECTORSTATE  补齐速度选择器状态字段
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state  (1,1) struct
+%     可能缺字段的选择器状态。
+%   params (1,1) struct
+%     参数结构，用于 reset 和边界判定。
+%
+% 输出
+%   state  (1,1) struct
+%     可直接参与选择器推进的完整状态结构。
+%
+% 说明
+%   - 若 inField 缺失，会基于 bounded 与几何边界即时补算。
 if ~isfield(state, 'x') || ~isfield(state, 'y') || ~isfield(state, 'vx') || ~isfield(state, 'vy')
     state = engine.reset(state, params);
 end
@@ -152,7 +226,26 @@ end
 
 %% 导轨模型（R 系列）
 function state = stepRailState(state, params, dt)
-%STEPRAILSTATE  R 系列导轨推进
+%STEPRAILSTATE  R 系列导轨单步推进入口
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state  (1,1) struct
+%     当前导轨状态（含位置、速度、电路分支状态等）。
+%   params (1,1) struct
+%     导轨参数（R/C/L、drive、bounded、templateId 等）。
+%   dt     (1,1) double
+%     本次推进步长（秒）。
+%
+% 输出
+%   state  (1,1) struct
+%     推进后的导轨状态，附加当前输出量与模式标签。
+%
+% 说明
+%   - R8 模板会转入专用推进函数 stepR8FrameState。
+%   - 其它 R 系列统一在本函数按元件类型分支推进。
 if isR8Template(params)
     state = stepR8FrameState(state, params, dt);
     return;
@@ -246,6 +339,21 @@ end
 function state = stepR8FrameState(state, params, dt)
 %STEPR8FRAMESTATE  R8 线框模型推进（中心坐标 + 重叠宽度公式）
 %
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state  (1,1) struct
+%     当前 R8 状态，主坐标语义为线框中心坐标。
+%   params (1,1) struct
+%     R8 参数结构（w/h/B/R/xMin/xMax/driveEnabled/Fdrive 等）。
+%   dt     (1,1) double
+%     本次推进步长（秒）。
+%
+% 输出
+%   state  (1,1) struct
+%     推进后的 R8 状态，包含电磁输出、几何输出与累计热量。
+%
 % 模式说明
 %   - 匀速模式（driveEnabled=false）：
 %       速度保持常量，仅做位置平移；但输出量仍按公式计算。
@@ -327,36 +435,44 @@ state = attachR8Outputs(state, params, out1, Fdrive);
 end
 
 function state = attachR8Outputs(state, params, out, Fdrive)
-%ATTACHR8OUTPUTS  写回 R8 输出字段（与曲线/输出区直接对接）
-state.epsilon = double(out.epsilon);
-state.current = double(out.current);
-state.fMag = double(out.fMag);
-state.pElec = double(out.pElec);
-state.pMech = double(Fdrive) * double(state.vx);
-
-loopH = max(double(pickField(params, 'h', pickField(params, 'H', pickField(params, 'L', 1.0)))), 1e-9);
-state.rail = struct( ...
-    'elementType', "R", ...
-    'L', loopH, ...
-    'w', double(out.w), ...
-    'h', double(out.h), ...
-    'x', double(state.x), ...
-    'xFront', double(out.xFront), ...
-    'xBack', double(out.xBack), ...
-    'inField', logical(out.inField), ...
-    'overlap', double(out.overlap), ...
-    'sPrime', double(out.sPrime), ...
-    'phi', double(out.phi), ...
-    'epsilon', double(out.epsilon), ...
-    'current', double(out.current), ...
-    'fMag', double(out.fMag), ...
-    'pElec', double(out.pElec), ...
-    'qHeat', double(pickField(state, 'qHeat', 0.0)) ...
-);
+%ATTACHR8OUTPUTS  R8 输出挂载兼容封装（step 内部）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state  (1,1) struct
+%   params (1,1) struct
+%   out    (1,1) struct
+%   Fdrive (1,1) double
+%
+% 输出
+%   state  (1,1) struct
+%
+% 说明
+%   - 本地函数仅做委托，真实实现位于 engine.helpers.attachR8Outputs。
+%   - 保留该封装是为了维持旧调用路径，降低重构风险。
+state = engine.helpers.attachR8Outputs(state, params, out, Fdrive);
 end
 
 function state = ensureRailState(state, params)
 %ENSURERAILSTATE  补齐导轨状态字段
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state  (1,1) struct
+%     可能不完整的导轨状态结构。
+%   params (1,1) struct
+%     参数结构，用于必要时 reset。
+%
+% 输出
+%   state  (1,1) struct
+%     可安全参与导轨推进的状态结构。
+%
+% 说明
+%   - 同时补齐 qHeat/iBranch/aBranch 等导轨专有字段。
 if ~isfield(state, 'x') || ~isfield(state, 'y') || ~isfield(state, 'vx')
     state = engine.reset(state, params);
 end
@@ -382,7 +498,26 @@ end
 
 %% 输出挂载与模型判定
 function state = attachRailOutputs(state, params, inField)
-%ATTACHRAILOUTPUTS  计算导轨输出量（R/C/L）
+%ATTACHRAILOUTPUTS  计算并挂载 R 系列输出量（R/C/L）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state   (1,1) struct
+%     当前导轨状态。
+%   params  (1,1) struct
+%     当前导轨参数。
+%   inField (1,1) logical
+%     当前时刻是否位于磁场有效区域。
+%
+% 输出
+%   state   (1,1) struct
+%     已写入 epsilon/current/fMag/pElec/pMech 及 state.rail 的状态。
+%
+% 说明
+%   - R8 分支直接复用 frameStripOutputs 真源。
+%   - R/C/L 分支按教学口径分别计算对应输出量。
 if isR8Template(params)
     out = physics.frameStripOutputs(double(pickField(state, 'x', 0.0)), double(pickField(state, 'vx', 0.0)), params);
     state.iBranch = double(out.current);
@@ -480,7 +615,25 @@ state.rail = struct( ...
 end
 
 function state = attachSelectorOutputs(state, params, inField)
-%ATTACHSELECTOROUTPUTS  计算 M4 当前输出量（q/m 与受力分量）
+%ATTACHSELECTOROUTPUTS  计算并挂载 M4 输出量（q/m 与受力分量）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   state   (1,1) struct
+%     当前选择器状态。
+%   params  (1,1) struct
+%     当前选择器参数。
+%   inField (1,1) logical
+%     当前是否在交叉场区域内。
+%
+% 输出
+%   state   (1,1) struct
+%     已写入 qOverM/vSelect 与电磁受力分量。
+%
+% 说明
+%   - 具体计算委托给 engine.helpers.selectorOutputs，step 层只负责字段回填。
 out = engine.helpers.selectorOutputs([double(state.vx); double(state.vy)], params, logical(inField));
 state.qOverM = out.qOverM;
 state.vSelect = out.vSelect;
@@ -499,6 +652,23 @@ end
 
 function inField = isRailInField(r, params)
 %ISRAILINFIELD  计算导体棒中心是否位于磁场有效区域
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   r      (2,1) double
+%     当前位置向量 [x; y]。
+%   params (1,1) struct
+%     导轨参数。
+%
+% 输出
+%   inField (1,1) logical
+%     true 表示在场内（R8 语义下为 overlap>0）。
+%
+% 说明
+%   - 普通导轨按中心点是否在 bounds 内判断。
+%   - R8 按线框与条带场重叠语义判断。
 if ~logicalField(params, 'bounded', false)
     inField = true;
     return;
@@ -514,34 +684,78 @@ inField = geom.isInsideBounds(r, box);
 end
 
 function elementType = resolveRailElement(params)
-%RESOLVERAILELEMENT  解析 R 系列回路元件类型（R/C/L）
-elementType = upper(strtrim(string(pickField(params, 'elementType', "R"))));
-if ~any(elementType == ["R","C","L"])
-    elementType = "R";
-end
+%RESOLVERAILELEMENT  解析 R 系列回路元件类型（兼容封装）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   params (1,1) struct
+%
+% 输出
+%   elementType (1,1) string
+%
+% 说明
+%   - 本地函数仅做委托，统一规则在 engine.helpers.resolveRailElement。
+elementType = engine.helpers.resolveRailElement(params);
 end
 
 function tf = isR8Template(params)
-%ISR8TEMPLATE  判断当前是否 R8 线框模板
-token = upper(strtrim(string(pickField(params, 'templateId', ""))));
-tf = token == "R8";
+%ISR8TEMPLATE  判断当前是否 R8 模板（兼容封装）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   params (1,1) struct
+%
+% 输出
+%   tf (1,1) logical
+%
+% 说明
+%   - 本地函数仅做委托，统一规则在 engine.helpers.isR8Template。
+tf = engine.helpers.isR8Template(params);
 end
 
 function modelType = resolveModelType(params)
-%RESOLVEMODELTYPE  解析当前参数对应模型类型
-modelType = lower(strtrim(string(pickField(params, 'modelType', "particle"))));
-if startsWith(modelType, "rail")
-    modelType = "rail";
-elseif startsWith(modelType, "selector")
-    modelType = "selector";
-else
-    modelType = "particle";
-end
+%RESOLVEMODELTYPE  解析当前参数对应模型类型（兼容封装）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   params (1,1) struct
+%
+% 输出
+%   modelType (1,1) string
+%
+% 说明
+%   - 本地函数仅做委托，统一规则在 engine.helpers.resolveModelType。
+modelType = engine.helpers.resolveModelType(params);
 end
 
 %% 有界分段推进与跨界定位（粒子/M4）
 function [rNew, vNew, inField] = propagateBoundedChain(r0, v0, omega, dt, box)
-%PROPAGATEBOUNDEDCHAIN  有界单步分段推进
+%PROPAGATEBOUNDEDCHAIN  粒子有界场单步分段推进
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   r0    (2,1) double : 起点位置
+%   v0    (2,1) double : 起点速度
+%   omega (1,1) double : 回旋角速度
+%   dt    (1,1) double : 总推进时长
+%   box   (1,1) struct : 有界场边界（xMin/xMax/yMin/yMax）
+%
+% 输出
+%   rNew    (2,1) double : 子步链推进后的终点位置
+%   vNew    (2,1) double : 子步链推进后的终点速度
+%   inField (1,1) logical: 终点是否位于场内
+%
+% 说明
+%   - 若一步内发生跨界，使用二分定位首次跨界时刻后继续推进剩余时长。
+%   - 最大跨界事件数有限制，避免异常参数导致死循环。
 remaining = double(dt);
 rNow = r0;
 vNow = v0;
@@ -591,7 +805,25 @@ inField = inNow;
 end
 
 function [rNew, vNew, inField] = propagateSelectorBoundedChain(r0, v0, params, dt, box)
-%PROPAGATESELECTORBOUNDEDCHAIN  速度选择器有界单步分段推进
+%PROPAGATESELECTORBOUNDEDCHAIN  速度选择器有界场单步分段推进
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   r0     (2,1) double : 起点位置
+%   v0     (2,1) double : 起点速度
+%   params (1,1) struct : 选择器参数结构
+%   dt     (1,1) double : 总推进时长
+%   box    (1,1) struct : 有界场边界
+%
+% 输出
+%   rNew    (2,1) double : 终点位置
+%   vNew    (2,1) double : 终点速度
+%   inField (1,1) logical: 终点是否在场内
+%
+% 说明
+%   - 与粒子版逻辑一致，但场内子段使用交叉场解析推进核。
 remaining = double(dt);
 rNow = r0;
 vNow = v0;
@@ -641,7 +873,25 @@ inField = inNow;
 end
 
 function tau = findCrossingTimeByBisection(r0, v0, omega, totalDt, inStart, box)
-%FINDCROSSINGTIMEBYBISECTION  二分定位首次跨界时刻
+%FINDCROSSINGTIMEBYBISECTION  二分定位粒子首次跨界时刻
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   r0      (2,1) double : 段起点位置
+%   v0      (2,1) double : 段起点速度
+%   omega   (1,1) double : 回旋角速度
+%   totalDt (1,1) double : 搜索区间上限
+%   inStart (1,1) logical: 起点是否在场内
+%   box     (1,1) struct : 边界结构
+%
+% 输出
+%   tau (1,1) double
+%     首次跨界时间估计（区间右端近似值）。
+%
+% 说明
+%   - 使用固定 32 次二分迭代，平衡数值精度与实时性能。
 lo = 0.0;
 hi = double(totalDt);
 
@@ -661,7 +911,25 @@ tau = hi;
 end
 
 function tau = findSelectorCrossingTimeByBisection(r0, v0, params, totalDt, inStart, box)
-%FINDSELECTORCROSSINGTIMEBYBISECTION  二分定位速度选择器首次跨界时刻
+%FINDSELECTORCROSSINGTIMEBYBISECTION  二分定位选择器首次跨界时刻
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   r0      (2,1) double : 段起点位置
+%   v0      (2,1) double : 段起点速度
+%   params  (1,1) struct : 选择器参数
+%   totalDt (1,1) double : 搜索区间上限
+%   inStart (1,1) logical: 起点是否在场内
+%   box     (1,1) struct : 边界结构
+%
+% 输出
+%   tau (1,1) double
+%     首次跨界时间估计（区间右端近似值）。
+%
+% 说明
+%   - 与粒子跨界定位逻辑一致，仅场内推进核不同。
 lo = 0.0;
 hi = double(totalDt);
 
@@ -682,7 +950,24 @@ end
 
 %% 段内推进核（场内/场外）
 function [rNew, vNew] = propagateSegment(rOld, vOld, omega, inField, dt)
-%PROPAGATESEGMENT  在指定区域属性下推进一个子段
+%PROPAGATESEGMENT  粒子模型单子段推进
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   rOld    (2,1) double : 子段起点位置
+%   vOld    (2,1) double : 子段起点速度
+%   omega   (1,1) double : 回旋角速度
+%   inField (1,1) logical: 子段是否位于场内
+%   dt      (1,1) double : 子段时长
+%
+% 输出
+%   rNew    (2,1) double : 子段终点位置
+%   vNew    (2,1) double : 子段终点速度
+%
+% 说明
+%   - 场内与场外推进核在此统一分发，避免上层重复判断。
 if inField
     [rNew, vNew] = propagateInField(rOld, vOld, omega, dt);
 else
@@ -691,7 +976,24 @@ end
 end
 
 function [rNew, vNew] = propagateSelectorSegment(rOld, vOld, params, inField, dt)
-%PROPAGATESELECTORSEGMENT  在指定区域属性下推进速度选择器一个子段
+%PROPAGATESELECTORSEGMENT  选择器模型单子段推进
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   rOld    (2,1) double : 子段起点位置
+%   vOld    (2,1) double : 子段起点速度
+%   params  (1,1) struct : 选择器参数
+%   inField (1,1) logical: 子段是否位于场内
+%   dt      (1,1) double : 子段时长
+%
+% 输出
+%   rNew    (2,1) double : 子段终点位置
+%   vNew    (2,1) double : 子段终点速度
+%
+% 说明
+%   - 场内调用交叉场解析核，场外调用匀速推进核。
 if inField
     [rNew, vNew] = propagateSelectorInField(rOld, vOld, params, dt);
 else
@@ -700,13 +1002,44 @@ end
 end
 
 function [rNew, vNew] = propagateFree(rOld, vOld, dt)
-%PROPAGATEFREE  磁场外推进：匀速直线
+%PROPAGATEFREE  场外匀速直线推进
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   rOld (2,1) double : 起点位置
+%   vOld (2,1) double : 起点速度
+%   dt   (1,1) double : 推进时长
+%
+% 输出
+%   rNew (2,1) double : 终点位置
+%   vNew (2,1) double : 终点速度（与输入相同）
+%
+% 说明
+%   - 本函数不修改速度，仅做线性位移积分。
 rNew = rOld + double(dt) * vOld;
 vNew = vOld;
 end
 
 function [rNew, vNew] = propagateSelectorInField(rOld, vOld, params, dt)
-%PROPAGATESELECTORINFIELD  交叉场区域内推进（解析解）
+%PROPAGATESELECTORINFIELD  选择器场内推进（交叉场解析解）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   rOld   (2,1) double : 起点位置
+%   vOld   (2,1) double : 起点速度
+%   params (1,1) struct : 选择器参数
+%   dt     (1,1) double : 推进时长
+%
+% 输出
+%   rNew   (2,1) double : 终点位置
+%   vNew   (2,1) double : 终点速度
+%
+% 说明
+%   - 从 params 读取 q/m/Ey/Bz 后统一调用 crossedFieldStep2D。
 q = double(pickField(params, 'q', 0.0));
 m = max(double(pickField(params, 'm', 1.0)), 1e-12);
 Ey = double(pickField(params, 'Ey', 0.0));
@@ -716,6 +1049,19 @@ end
 
 function [rNew, vNew] = propagateInField(rOld, vOld, omega, dt)
 %PROPAGATEINFIELD  磁场内推进：调用独立旋转矩阵算法
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   rOld  (2,1) double : 起点位置
+%   vOld  (2,1) double : 起点速度
+%   omega (1,1) double : 回旋角速度
+%   dt    (1,1) double : 推进时长
+%
+% 输出
+%   rNew  (2,1) double : 终点位置
+%   vNew  (2,1) double : 终点速度
 %
 % 说明
 %   - 这里不再内联旋转矩阵公式，改为调用 physics.rotmatStep2D
@@ -729,6 +1075,20 @@ end
 %% 通用工具
 function omega = cyclotronOmega(params)
 %CYCLOTRONOMEGA  计算回旋角速度 omega = q*Bz/m
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   params (1,1) struct
+%     至少应包含 q/m/Bdir/B 等字段。
+%
+% 输出
+%   omega (1,1) double
+%     回旋角速度（带符号）。
+%
+% 说明
+%   - 对质量使用下限保护，避免出现除零。
 q = pickField(params, 'q', 0.0);
 m = max(pickField(params, 'm', 1.0), 1e-12);
 Bz = engine.helpers.signedBFromParams(params);
@@ -736,7 +1096,22 @@ omega = double(q) * Bz / double(m);
 end
 
 function v = logicalField(s, name, fallback)
-%LOGICALFIELD  安全读取 logical 字段
+%LOGICALFIELD  安全读取 logical 字段并归一化为标量逻辑值
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   s        (1,1) struct : 源结构体
+%   name     (1,:) char/string : 字段名
+%   fallback (1,1) logical/numeric : 缺失或非法时的回退值
+%
+% 输出
+%   v (1,1) logical
+%     归一化后的逻辑标量。
+%
+% 说明
+%   - 支持 logical 与 numeric 标量输入，其余类型统一回退 fallback。
 raw = pickField(s, name, fallback);
 if islogical(raw) && isscalar(raw)
     v = raw;
@@ -748,7 +1123,22 @@ end
 end
 
 function v = pickField(s, name, fallback)
-%PICKFIELD  安全读取字段（缺失则返回 fallback）
+%PICKFIELD  安全读取结构体字段（缺失则返回 fallback）
+%
+% 用途
+%   - 见函数标题与下方输入/输出/说明小节。
+%
+% 输入
+%   s        (1,1) struct : 源结构体
+%   name     (1,:) char/string : 字段名
+%   fallback 任意类型 : 回退值
+%
+% 输出
+%   v 任意类型
+%     字段存在时返回字段值，否则返回 fallback。
+%
+% 说明
+%   - 该函数只做字段安全读取，不做类型转换。
 if isstruct(s) && isfield(s, name)
     v = s.(name);
 else
