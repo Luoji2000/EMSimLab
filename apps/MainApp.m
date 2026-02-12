@@ -54,7 +54,8 @@
     properties (Access = private)
         ParamChangedListener = event.listener.empty
         LogLines            string = strings(0, 1)
-        MaxLogLines         (1,1) double = 500
+        MaxStoredLogLines   (1,1) double = 0   % 0 表示不截断，导出保留完整会话日志
+        MaxUiLogLines       (1,1) double = 200
         LogUiFlushIntervalSec (1,1) double = 0.25
         LastLogUiFlushAt    (1,1) double = -inf
         PendingLogUiDirty   (1,1) logical = false
@@ -388,10 +389,12 @@
                 'm1_class_exists', exist('M1_for_test', 'class') == 8, ...
                 'm4_class_exists', exist('M4_for_test', 'class') == 8, ...
                 'r2_class_exists', exist('R2_for_test', 'class') == 8, ...
+                'r8_class_exists', exist('R8_for_test', 'class') == 8, ...
                 'm5_class_exists', exist('M5_for_test', 'class') == 8, ...
                 'm1_path', string(which('M1_for_test')), ...
                 'm4_path', string(which('M4_for_test')), ...
                 'r2_path', string(which('R2_for_test')), ...
+                'r8_path', string(which('R8_for_test')), ...
                 'm5_path', string(which('M5_for_test')) ...
             ));
 
@@ -459,6 +462,10 @@
                 engineToken = lower(strtrim(string(app.CurrentEngineKey)));
             end
 
+            if token == "R8"
+                className = "R8_for_test";
+                return;
+            end
             if token == "M5"
                 className = "M5_for_test";
                 return;
@@ -618,8 +625,8 @@
             end
 
             app.LogLines(end+1, 1) = string(line);
-            if numel(app.LogLines) > app.MaxLogLines
-                app.LogLines = app.LogLines(end-app.MaxLogLines+1:end);
+            if app.MaxStoredLogLines > 0 && numel(app.LogLines) > app.MaxStoredLogLines
+                app.LogLines = app.LogLines(end-app.MaxStoredLogLines+1:end);
             end
 
             app.PendingLogUiDirty = true;
@@ -671,7 +678,13 @@
                 end
             end
 
-            app.LogTextArea.Value = cellstr(app.LogLines);
+            tailCount = min(numel(app.LogLines), app.MaxUiLogLines);
+            if tailCount <= 0
+                app.LogTextArea.Value = {''};
+            else
+                tailLines = app.LogLines(end-tailCount+1:end);
+                app.LogTextArea.Value = cellstr(tailLines);
+            end
             app.LastLogUiFlushAt = nowSec;
             app.PendingLogUiDirty = false;
         end
@@ -788,24 +801,31 @@
             app.appendLogLineImpl(line);
         end
 
-        function tf = shouldEchoLogToConsole(app, levelLabel)
-            %SHOULDECHOLOGTOCONSOLE  控制日志是否需要打印到 MATLAB 命令行
+        function tf = shouldEchoLogToConsole(app, entryOrLevel, varargin)
+            %SHOULDECHOLOGTOCONSOLE  控制日志是否打印到 MATLAB 命令行
             %
-            % 规则
-            %   1) 错误/警告始终输出命令行
-            %   2) 播放过程中压制“信息/调试”命令行输出，减少 IO 抖动
-            %   3) 非播放态保留命令行输出，便于调试
-            level = string(levelLabel);
-            if any(level == ["错误","警告"])
-                tf = true;
-                return;
+            % 规则（性能优先）
+            %   1) 仅保留“应用已创建/应用销毁”命令行输出
+            %   2) 其他日志只写入 UI 日志区，不写命令行
+            %
+            % 兼容性
+            %   - 支持旧签名：shouldEchoLogToConsole(level)
+            %   - 支持新签名：shouldEchoLogToConsole(entryStruct)
+            %#ok<INUSD>
+            tf = false;
+
+            eventName = "";
+            if nargin >= 2 && isstruct(entryOrLevel)
+                if isfield(entryOrLevel, 'event')
+                    eventName = string(entryOrLevel.event);
+                end
+            else
+                if nargin >= 3
+                    eventName = string(varargin{1});
+                end
             end
 
-            if app.IsPlaying
-                tf = false;
-            else
-                tf = true;
-            end
+            tf = any(eventName == ["应用已创建", "应用销毁"]);
         end
 
         function startPlayback(app)

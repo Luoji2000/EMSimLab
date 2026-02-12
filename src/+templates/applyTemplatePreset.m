@@ -3,6 +3,7 @@
 %
 % 说明
 %   - R1/R2/R3 统一并入 R 模板
+%   - R8 为独立模板（线框在磁场中的运动）
 %   - 本函数只做“模板默认值”，不覆盖用户后续改参
 
 arguments
@@ -17,6 +18,8 @@ if tpl == "M4"
     p = applySelectorPreset(p);
 elseif tpl == "M5"
     p = applyMassSpecPreset(p);
+elseif tpl == "R8"
+    p = applyR8Preset(p);
 elseif startsWith(tpl, "R")
     p = applyRailPreset(p);
 end
@@ -26,12 +29,53 @@ function p = applyRailPreset(p)
 %APPLYRAILPRESET  R 系列统一预设
 p.modelType = "rail";
 p.templateId = "R";
+p.elementType = "R";
 
 if isfield(p, 'showCurrent')
     p.showCurrent = true;
 end
 
 % 统一模板下不强制 loopClosed/driveEnabled，由用户在参数面板选择
+end
+
+function p = applyR8Preset(p)
+%APPLYR8PRESET  R8 线框模板预设
+p.modelType = "rail";
+p.templateId = "R8";
+p.elementType = "R";
+p.bounded = true;
+p.loopClosed = true;
+
+% 场景语义（R8）
+%   1) 线框默认尺寸：宽 4，高 3
+%   2) 线框中心默认在 (-3, 0)，R8 主坐标即中心坐标
+%   3) 磁场区域 x∈[0,4]，y 方向按可视窗口显示（等效无界）
+%   4) 默认匀速模式（driveEnabled=false，Fdrive=0）
+p.w = 4.0;
+p.W = 4.0;
+p.h = 3.0;
+p.H = 3.0;
+p.L = 3.0;
+p.xCenter = -3.0;
+p.yCenter = 0.0;
+p.x0 = p.xCenter;
+p.y0 = p.yCenter;
+p.v0 = 1.0;
+p.driveEnabled = false;
+p.Fdrive = 0.0;
+p.xMin = 0.0;
+p.xMax = 4.0;
+p.autoFollow = false;
+
+if isfield(p, 'showCurrent')
+    p.showCurrent = true;
+end
+if isfield(p, 'showDriveForce')
+    p.showDriveForce = false;
+end
+if isfield(p, 'showAmpereForce')
+    p.showAmpereForce = false;
+end
 end
 
 function p = applyMassSpecPreset(p)

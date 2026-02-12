@@ -1,5 +1,10 @@
 classdef R8_for_test < matlab.ui.componentcontainer.ComponentContainer
 
+    properties (Access = public)
+        % Value - 对外统一参数载荷
+        Value struct = struct()
+    end
+
     % Properties that correspond to underlying components
     properties (Access = private, Transient, NonCopyable)
         paramGrid             matlab.ui.container.GridLayout
@@ -46,6 +51,35 @@ classdef R8_for_test < matlab.ui.componentcontainer.ComponentContainer
         ShowDriveForceCheck   matlab.ui.control.CheckBox
         ShowGridCheck         matlab.ui.control.CheckBox
         ShowBMarksCheck       matlab.ui.control.CheckBox
+        IsApplyingPayload     logical = false
+    end
+
+    events
+        % PayloadChanged - 任意参数控件变化后触发
+        PayloadChanged
+    end
+
+    methods
+        function payload = getPayload(comp)
+            %GETPAYLOAD  读取当前参数（已归一化）
+            if comp.isUiReady()
+                payload = comp.collectPayloadFromUi(comp.Value);
+            else
+                payload = comp.normalizePayload(comp.Value, comp.Value);
+            end
+        end
+
+        function setPayload(comp, payload)
+            %SETPAYLOAD  外部写入参数并同步 UI
+            if nargin < 2 || ~isstruct(payload)
+                return;
+            end
+            payload = comp.normalizePayload(payload, comp.Value);
+            comp.Value = payload;
+            if comp.isUiReady()
+                comp.applyPayloadToUi(payload);
+            end
+        end
     end
 
     methods (Access = protected)
@@ -53,7 +87,11 @@ classdef R8_for_test < matlab.ui.componentcontainer.ComponentContainer
         % 属性值发生更改时执行的代码
         function update(comp)
             % 使用此函数更新底层组件
-            
+            payload = comp.normalizePayload(comp.Value, comp.Value);
+            comp.Value = payload;
+            if comp.isUiReady()
+                comp.applyPayloadToUi(payload);
+            end
         end
 
         % 创建底层组件
@@ -340,6 +378,378 @@ classdef R8_for_test < matlab.ui.componentcontainer.ComponentContainer
             comp.ModeLabel.Layout.Row = 1;
             comp.ModeLabel.Layout.Column = 1;
             comp.ModeLabel.Text = '模式';
+
+            % 修正中心坐标标签文案（导出文件中 X/Y 顺序互换）
+            comp.xConterLabel.Text = '中心位置X(m)';
+            comp.YconterLabel.Text = '中心位置Y(m)';
+
+            % 默认参数写入与回调绑定
+            payload = comp.defaultPayload();
+            comp.Value = payload;
+            comp.applyPayloadToUi(payload);
+            comp.bindControlCallbacks();
+        end
+    end
+
+    methods (Access = private)
+        function tf = isUiReady(comp)
+            %ISUIREADY  判断关键控件是否已创建
+            tf = ~isempty(comp.ModeDropDown) && isvalid(comp.ModeDropDown) ...
+                && ~isempty(comp.BField) && isvalid(comp.BField);
+        end
+
+        function bindControlCallbacks(comp)
+            %BINDCONTROLCALLBACKS  绑定统一回调入口
+            controls = { ...
+                comp.ModeDropDown, comp.BField, comp.BdirDropDown, ...
+                comp.WField, comp.HField, comp.xConterField, comp.YconterField, ...
+                comp.mField, comp.FField, comp.vField, comp.RField, ...
+                comp.XminField, comp.XmaxField, ...
+                comp.ShowTrailCheck, comp.ShowVCheck, comp.ShowDriveForceCheck, ...
+                comp.ShowAmpereForceCheck, comp.ShowCurrentCheck, comp.ShowGridCheck, comp.ShowBMarksCheck ...
+            };
+            for i = 1:numel(controls)
+                h = controls{i};
+                if isempty(h) || ~isvalid(h)
+                    continue;
+                end
+                h.ValueChangedFcn = @(~,~)comp.onAnyControlChanged();
+            end
+        end
+
+        function onAnyControlChanged(comp)
+            %ONANYCONTROLCHANGED  任意参数变化后的统一入口
+            if comp.IsApplyingPayload
+                return;
+            end
+            previous = comp.Value;
+            payload = comp.collectPayloadFromUi(previous);
+            payload = comp.normalizePayload(payload, previous);
+            comp.Value = payload;
+            comp.applyPayloadToUi(payload);
+            notify(comp, 'PayloadChanged');
+        end
+
+        function payload = collectPayloadFromUi(comp, previousPayload)
+            %COLLECTPAYLOADFROMUI  从控件读取当前参数
+            if nargin < 2 || ~isstruct(previousPayload)
+                previousPayload = comp.defaultPayload();
+            end
+
+            driveEnabled = comp.modeToDriveEnabled(comp.ModeDropDown.Value);
+            payload = struct();
+            payload.modelType = "rail";
+            payload.templateId = "R8";
+            payload.elementType = "R";
+            payload.B = comp.BField.Value;
+            payload.Bdir = comp.bdirFromUiValue(comp.BdirDropDown.Value);
+            payload.w = comp.WField.Value;
+            payload.W = payload.w;
+            payload.h = comp.HField.Value;
+            payload.H = payload.h;
+            payload.xCenter = comp.xConterField.Value;
+            payload.yCenter = comp.YconterField.Value;
+            payload.v0 = comp.vField.Value;
+            payload.m = comp.mField.Value;
+            payload.R = comp.RField.Value;
+            payload.loopClosed = true;
+            payload.driveEnabled = driveEnabled;
+            if driveEnabled
+                payload.Fdrive = comp.FField.Value;
+            else
+                payload.Fdrive = 0.0;
+            end
+            payload.bounded = true;
+            payload.xMin = comp.XminField.Value;
+            payload.xMax = comp.XmaxField.Value;
+            payload.yMin = -1000.0;
+            payload.yMax = 1000.0;
+            payload.showTrail = comp.ShowTrailCheck.Value;
+            payload.showV = comp.ShowVCheck.Value;
+            payload.showCurrent = comp.ShowCurrentCheck.Value;
+            payload.showGrid = comp.ShowGridCheck.Value;
+            payload.showBMarks = comp.ShowBMarksCheck.Value;
+            payload.showDriveForce = driveEnabled && comp.ShowDriveForceCheck.Value;
+            payload.showAmpereForce = driveEnabled && comp.ShowAmpereForceCheck.Value;
+
+            % 其余运行字段沿用旧值
+            payload.C = comp.pickField(previousPayload, 'C', 1.0);
+            payload.Ls = comp.pickField(previousPayload, 'Ls', 1.0);
+            payload.autoFollow = comp.pickField(previousPayload, 'autoFollow', false);
+            payload.followSpan = comp.pickField(previousPayload, 'followSpan', 12.0);
+            payload.maxSpan = comp.pickField(previousPayload, 'maxSpan', 120.0);
+            payload.speedScale = comp.pickField(previousPayload, 'speedScale', 1.0);
+            payload.epsilonOut = comp.pickField(previousPayload, 'epsilonOut', 0.0);
+            payload.currentOut = comp.pickField(previousPayload, 'currentOut', 0.0);
+            payload.xOut = comp.pickField(previousPayload, 'xOut', 0.0);
+            payload.vOut = comp.pickField(previousPayload, 'vOut', 0.0);
+            payload.fMagOut = comp.pickField(previousPayload, 'fMagOut', 0.0);
+            payload.qHeatOut = comp.pickField(previousPayload, 'qHeatOut', 0.0);
+            payload.pElecOut = comp.pickField(previousPayload, 'pElecOut', 0.0);
+        end
+
+        function applyPayloadToUi(comp, payload)
+            %APPLYPAYLOADTOUI  将参数写回到控件并更新联动状态
+            payload = comp.normalizePayload(payload, comp.Value);
+            comp.IsApplyingPayload = true;
+            try
+                comp.ModeDropDown.Value = comp.boolToMode(payload.driveEnabled);
+                comp.BField.Value = payload.B;
+                comp.BdirDropDown.Value = comp.bdirToUiValue(payload.Bdir);
+                comp.WField.Value = payload.w;
+                comp.HField.Value = payload.h;
+                comp.xConterField.Value = payload.xCenter;
+                comp.YconterField.Value = payload.yCenter;
+                comp.vField.Value = payload.v0;
+                comp.mField.Value = payload.m;
+                comp.RField.Value = payload.R;
+                comp.FField.Value = payload.Fdrive;
+                comp.XminField.Value = payload.xMin;
+                comp.XmaxField.Value = payload.xMax;
+                comp.ShowTrailCheck.Value = payload.showTrail;
+                comp.ShowVCheck.Value = payload.showV;
+                comp.ShowCurrentCheck.Value = payload.showCurrent;
+                comp.ShowGridCheck.Value = payload.showGrid;
+                comp.ShowBMarksCheck.Value = payload.showBMarks;
+                comp.ShowDriveForceCheck.Value = payload.showDriveForce;
+                comp.ShowAmpereForceCheck.Value = payload.showAmpereForce;
+                comp.updateModeUi(payload.driveEnabled);
+            catch err
+                comp.IsApplyingPayload = false;
+                rethrow(err);
+            end
+            comp.IsApplyingPayload = false;
+        end
+
+        function updateModeUi(comp, driveEnabled)
+            %UPDATEMODEUI  “匀速/阻尼”联动：外力编辑与受力箭头开关
+            state = comp.boolToOnOff(driveEnabled);
+            comp.FField.Enable = state;
+            comp.ShowDriveForceCheck.Enable = state;
+            comp.ShowAmpereForceCheck.Enable = state;
+            if ~driveEnabled
+                comp.FField.Value = 0.0;
+                comp.ShowDriveForceCheck.Value = false;
+                comp.ShowAmpereForceCheck.Value = false;
+            end
+        end
+
+        function payload = normalizePayload(comp, in, previousPayload)
+            %NORMALIZEPAYLOAD  合并默认值并执行 R8 规则约束
+            if nargin < 3 || ~isstruct(previousPayload)
+                previousPayload = comp.defaultPayload();
+            end
+            base = comp.defaultPayload();
+            payload = base;
+
+            if isstruct(previousPayload)
+                names = fieldnames(base);
+                for i = 1:numel(names)
+                    k = names{i};
+                    if isfield(previousPayload, k)
+                        payload.(k) = previousPayload.(k);
+                    end
+                end
+            end
+            if isstruct(in)
+                names = fieldnames(base);
+                for i = 1:numel(names)
+                    k = names{i};
+                    if isfield(in, k)
+                        payload.(k) = in.(k);
+                    end
+                end
+                if isfield(in, 'xCenter')
+                    payload.xCenter = comp.toDouble(in.xCenter, payload.xCenter);
+                end
+                if isfield(in, 'yCenter')
+                    payload.yCenter = comp.toDouble(in.yCenter, payload.yCenter);
+                end
+            end
+
+            payload.modelType = "rail";
+            payload.templateId = "R8";
+            payload.elementType = "R";
+            payload.loopClosed = true;
+            payload.bounded = true;
+            payload.autoFollow = false;
+
+            payload.B = max(comp.toDouble(payload.B, base.B), 0.0);
+            payload.Bdir = comp.normalizeEnum(payload.Bdir, ["out","in"], "out");
+            payload.w = max(comp.toDouble(payload.w, base.w), 1e-3);
+            payload.W = payload.w;
+            payload.h = max(comp.toDouble(payload.h, base.h), 1e-3);
+            payload.H = payload.h;
+            payload.xCenter = comp.toDouble(payload.xCenter, base.xCenter);
+            payload.yCenter = comp.toDouble(payload.yCenter, base.yCenter);
+            payload.v0 = abs(comp.toDouble(payload.v0, base.v0));
+            payload.m = max(comp.toDouble(payload.m, base.m), 1e-6);
+            payload.R = max(comp.toDouble(payload.R, base.R), 1e-6);
+            payload.Fdrive = comp.toDouble(payload.Fdrive, base.Fdrive);
+            payload.driveEnabled = comp.toLogical(payload.driveEnabled, base.driveEnabled);
+            payload.xMin = comp.toDouble(payload.xMin, base.xMin);
+            payload.xMax = comp.toDouble(payload.xMax, base.xMax);
+            if payload.xMin > payload.xMax
+                t = payload.xMin;
+                payload.xMin = payload.xMax;
+                payload.xMax = t;
+            end
+            payload.yMin = -1000.0;
+            payload.yMax = 1000.0;
+
+            payload.showTrail = comp.toLogical(payload.showTrail, base.showTrail);
+            payload.showV = comp.toLogical(payload.showV, base.showV);
+            payload.showCurrent = comp.toLogical(payload.showCurrent, base.showCurrent);
+            payload.showGrid = comp.toLogical(payload.showGrid, base.showGrid);
+            payload.showBMarks = comp.toLogical(payload.showBMarks, base.showBMarks);
+            payload.showDriveForce = comp.toLogical(payload.showDriveForce, base.showDriveForce);
+            payload.showAmpereForce = comp.toLogical(payload.showAmpereForce, base.showAmpereForce);
+
+            if ~payload.driveEnabled
+                payload.Fdrive = 0.0;
+                payload.showDriveForce = false;
+                payload.showAmpereForce = false;
+            end
+
+            % R8 主坐标采用“线框中心坐标”
+            payload.x0 = payload.xCenter;
+            payload.y0 = payload.yCenter;
+            payload.L = payload.h;
+        end
+
+        function payload = defaultPayload(~)
+            %DEFAULTPAYLOAD  R8 默认参数（按教学约定）
+            payload = struct( ...
+                'modelType', "rail", ...
+                'templateId', "R8", ...
+                'elementType', "R", ...
+                'B', 1.0, ...
+                'Bdir', "out", ...
+                'w', 4.0, ...
+                'W', 4.0, ...
+                'h', 3.0, ...
+                'H', 3.0, ...
+                'xCenter', -3.0, ...
+                'yCenter', 0.0, ...
+                'x0', -3.0, ...
+                'y0', 0.0, ...
+                'L', 3.0, ...
+                'v0', 1.0, ...
+                'm', 1.0, ...
+                'R', 1.0, ...
+                'C', 1.0, ...
+                'Ls', 1.0, ...
+                'loopClosed', true, ...
+                'driveEnabled', false, ...
+                'Fdrive', 0.0, ...
+                'bounded', true, ...
+                'xMin', 0.0, ...
+                'xMax', 4.0, ...
+                'yMin', -1000.0, ...
+                'yMax', 1000.0, ...
+                'showTrail', true, ...
+                'showV', true, ...
+                'showDriveForce', false, ...
+                'showAmpereForce', false, ...
+                'showCurrent', true, ...
+                'showGrid', true, ...
+                'showBMarks', true, ...
+                'autoFollow', false, ...
+                'followSpan', 12.0, ...
+                'maxSpan', 120.0, ...
+                'speedScale', 1.0, ...
+                'epsilonOut', 0.0, ...
+                'currentOut', 0.0, ...
+                'xOut', 0.0, ...
+                'vOut', 0.0, ...
+                'fMagOut', 0.0, ...
+                'qHeatOut', 0.0, ...
+                'pElecOut', 0.0 ...
+            );
+        end
+
+        function enabled = modeToDriveEnabled(~, modeText)
+            %MODETODRIVEENABLED  模式文本映射为驱动开关
+            enabled = strtrim(string(modeText)) == "启用阻尼";
+        end
+
+        function modeText = boolToMode(~, enabled)
+            %BOOLTOMODE  驱动开关映射为模式文本
+            if enabled
+                modeText = '启用阻尼';
+            else
+                modeText = '匀速运动';
+            end
+        end
+
+        function key = bdirFromUiValue(~, uiVal)
+            s = strtrim(string(uiVal));
+            if s == "入屏"
+                key = "in";
+            else
+                key = "out";
+            end
+        end
+
+        function uiVal = bdirToUiValue(~, key)
+            if strtrim(string(key)) == "in"
+                uiVal = '入屏';
+            else
+                uiVal = '出屏';
+            end
+        end
+
+        function state = boolToOnOff(~, tf)
+            if tf
+                state = 'on';
+            else
+                state = 'off';
+            end
+        end
+
+        function v = normalizeEnum(~, vRaw, options, defaultValue)
+            token = strtrim(string(vRaw));
+            idx = find(strcmpi(string(options), token), 1, 'first');
+            if isempty(idx)
+                v = string(defaultValue);
+            else
+                v = string(options(idx));
+            end
+        end
+
+        function v = toDouble(~, vRaw, defaultValue)
+            if isnumeric(vRaw) && isscalar(vRaw) && isfinite(vRaw)
+                v = double(vRaw);
+                return;
+            end
+            if isstring(vRaw) || ischar(vRaw)
+                tmp = str2double(string(vRaw));
+                if isfinite(tmp)
+                    v = double(tmp);
+                    return;
+                end
+            end
+            v = double(defaultValue);
+        end
+
+        function v = toLogical(~, vRaw, defaultValue)
+            if islogical(vRaw) && isscalar(vRaw)
+                v = logical(vRaw);
+                return;
+            end
+            if isnumeric(vRaw) && isscalar(vRaw) && isfinite(vRaw)
+                v = logical(vRaw ~= 0);
+                return;
+            end
+            v = logical(defaultValue);
+        end
+
+        function v = pickField(~, s, name, fallback)
+            if isstruct(s) && isfield(s, name)
+                v = s.(name);
+            else
+                v = fallback;
+            end
         end
     end
 end

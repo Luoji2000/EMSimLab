@@ -3,6 +3,7 @@
 %
 % 兼容策略
 %   - R1/R2/R3/R4 统一映射到 R
+%   - R8 为独立模板，不参与映射
 
 list = templates.registry();
 if isempty(list)
@@ -10,7 +11,10 @@ if isempty(list)
 end
 
 token = upper(strtrim(string(id)));
-if ~isempty(regexp(token, '^R[0-9]+$', 'once'))
+if any(token == ["R1","R2","R3","R4"])
+    token = "R";
+end
+if token == "R2LC"
     token = "R";
 end
 

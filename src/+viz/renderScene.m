@@ -217,6 +217,12 @@ token = upper(strtrim(string(pickField(p, 'templateId', pickField(state, 'templa
 tf = token == "M5";
 end
 
+function tf = isR8Template(p, state)
+%ISR8TEMPLATE  判断当前是否 R8 线框模板
+token = upper(strtrim(string(pickField(p, 'templateId', pickField(state, 'templateId', "")))));
+tf = token == "R8";
+end
+
 function cache = hideRailOnlyHandles(cache)
 %HIDERAILONLYHANDLES  在粒子模型下隐藏导轨专用图元
 hideHandle(cache.hRailTop);
@@ -330,7 +336,11 @@ if ~needTitle
 end
 
 if modelType == "rail"
-    titleText = string(sprintf('导轨滑杆场景（t = %.3f s）', double(tNow)));
+    if isR8Template(p, state)
+        titleText = string(sprintf('线框在磁场中的运动（t = %.3f s）', double(tNow)));
+    else
+        titleText = string(sprintf('导轨滑杆场景（t = %.3f s）', double(tNow)));
+    end
 elseif modelType == "selector"
     titleText = string(sprintf('速度选择器场景（t = %.3f s）', double(tNow)));
 elseif isMassSpec
@@ -356,7 +366,12 @@ end
 end
 
 function trajDraw = trimTrailForRender(traj, maxPoints)
-%TRIMTRAILFORRENDER  仅渲染末尾轨迹，减少每帧大数组写入开销
+%TRIMTRAILFORRENDER  轨迹抽稀渲染（保留起点到当前时刻的全程形状）
+%
+% 说明
+%   - 当点数较少时：全量绘制
+%   - 当点数过多时：按固定步长抽稀，保留首点与末点
+%   - 目标：兼顾“全程可见”与“渲染性能稳定”
 trajDraw = traj;
 if ~isnumeric(traj) || size(traj, 2) ~= 2
     return;
@@ -365,7 +380,13 @@ n = size(traj, 1);
 if n <= maxPoints
     return;
 end
-trajDraw = traj(n-maxPoints+1:n, :);
+
+step = max(1, ceil(n / maxPoints));
+idx = 1:step:n;
+if idx(end) ~= n
+    idx(end+1) = n;
+end
+trajDraw = traj(idx, :);
 end
 
 function setRenderCache(ax, cache)
@@ -591,11 +612,16 @@ info = struct( ...
     'cache_hit', false ...
 );
 
+isR8 = isR8Template(p, struct());
 bounded = logicalField(p, 'bounded', false);
+if isR8
+    % R8 语义：磁场是竖直条带（xMin~xMax，y 方向无界）
+    bounded = true;
+end
 info.bounded = bounded;
 
 % 边框显示独立于 showBMarks：有界模式下始终显示边界位置
-[cache, boxVisible] = updateFieldBox(ax, cache, p, bounded, modelType);
+[cache, boxVisible] = updateFieldBox(ax, cache, p, bounded, modelType, isR8);
 info.box_visible = boxVisible;
 
 showB = logicalField(p, 'showBMarks', true);
@@ -619,8 +645,14 @@ end
 
 % 生成“磁场标记缓存键”，用于跳过重复点阵重建与重复 set(XData/YData)
 if bounded
-    box = geom.readBoundsFromParams(p);
-    key = composeBMarkKeyBounded(box, marker);
+    if isR8
+        xMinStrip = double(pickField(p, 'xMin', 0.0));
+        xMaxStrip = double(pickField(p, 'xMax', xMinStrip + 4.0));
+        key = composeBMarkKeyVerticalStrip(xMinStrip, xMaxStrip, yLim, viewSpan, marker);
+    else
+        box = geom.readBoundsFromParams(p);
+        key = composeBMarkKeyBounded(box, marker);
+    end
     if isLiveHandle(cache.hBMarks) && cache.lastBMarkKey == key
         % 点阵未变化时仅保持可见，避免高频 set 带来的渲染抖动
         set(cache.hBMarks, 'Visible', 'on');
@@ -631,7 +663,11 @@ if bounded
         info.cache_hit = true;
         return;
     end
-    [xx, yy] = buildBMarkGridInBox(box);
+    if isR8
+        [xx, yy] = buildBMarkGridVerticalStrip(xMinStrip, xMaxStrip, yLim, viewSpan);
+    else
+        [xx, yy] = buildBMarkGridInBox(box);
+    end
 else
     key = composeBMarkKeyView(xLim, yLim, viewSpan, marker);
     if isLiveHandle(cache.hBMarks) && cache.lastBMarkKey == key
@@ -695,6 +731,18 @@ key = string(sprintf( ...
     xLim(1), xLim(2), yLim(1), yLim(2), viewSpan, char(marker)));
 end
 
+function key = composeBMarkKeyVerticalStrip(xMin, xMax, yLim, viewSpan, marker)
+%COMPOSEBMARKKEYVERTICALSTRIP  生成 R8 竖直条带磁场标记缓存键
+if xMax < xMin
+    t = xMin;
+    xMin = xMax;
+    xMax = t;
+end
+key = string(sprintf( ...
+    'strip|%.3f|%.3f|%.3f|%.3f|%.3f|%s', ...
+    xMin, xMax, yLim(1), yLim(2), viewSpan, char(marker)));
+end
+
 function [xx, yy] = buildBMarkGrid(xLim, yLim, viewSpan)
 %BUILDBMARKGRID  在可视区内生成磁场标记点阵
 n = max(10, min(24, round(viewSpan * 1.2)));
@@ -716,7 +764,35 @@ xx = X(:);
 yy = Y(:);
 end
 
-function [cache, visible] = updateFieldBox(ax, cache, p, bounded, modelType)
+function [xx, yy] = buildBMarkGridVerticalStrip(xMin, xMax, yLim, viewSpan)
+%BUILDBMARKGRIDVERTICALSTRIP  在竖直条带生成磁场标记（R8）
+%
+% 区域定义
+%   - xMin <= x <= xMax
+%   - y 覆盖当前可视窗口（等效“y方向无界”的屏幕投影）
+if xMax < xMin
+    t = xMin;
+    xMin = xMax;
+    xMax = t;
+end
+xStart = double(xMin);
+xEnd = double(xMax);
+if xEnd <= xStart + 1e-9
+    xx = NaN;
+    yy = NaN;
+    return;
+end
+
+nX = max(10, min(28, round(max(1.0, xEnd - xStart) * 2.0)));
+nY = max(10, min(24, round(max(1.0, viewSpan) * 1.2)));
+xv = linspace(xStart, xEnd, nX);
+yv = linspace(yLim(1), yLim(2), nY);
+[X, Y] = meshgrid(xv, yv);
+xx = X(:);
+yy = Y(:);
+end
+
+function [cache, visible] = updateFieldBox(ax, cache, p, bounded, modelType, isR8)
 %UPDATEFIELDBOX  更新有界磁场黑色边框
 visible = false;
 if ~bounded || modelType == "selector"
@@ -724,9 +800,22 @@ if ~bounded || modelType == "selector"
     return;
 end
 
-box = geom.readBoundsFromParams(p);
-xData = [box.xMin, box.xMax, box.xMax, box.xMin, box.xMin];
-yData = [box.yMin, box.yMin, box.yMax, box.yMax, box.yMin];
+if isR8
+    xWallL = double(pickField(p, 'xMin', 0.0));
+    xWallR = double(pickField(p, 'xMax', xWallL + 4.0));
+    if xWallR < xWallL
+        t = xWallL;
+        xWallL = xWallR;
+        xWallR = t;
+    end
+    yNow = ax.YLim;
+    xData = [xWallL, xWallR, xWallR, xWallL, xWallL];
+    yData = [yNow(1), yNow(1), yNow(2), yNow(2), yNow(1)];
+else
+    box = geom.readBoundsFromParams(p);
+    xData = [box.xMin, box.xMax, box.xMax, box.xMin, box.xMin];
+    yData = [box.yMin, box.yMin, box.yMax, box.yMax, box.yMin];
+end
 
 if ~isLiveHandle(cache.hFieldBox)
     cache.hFieldBox = line('Parent', ax, ...
@@ -908,7 +997,7 @@ end
 
 %% 导轨场景主体（R 系列）
 function [cache, info] = renderRailSceneBody(ax, cache, state, p, viewSpan)
-%RENDERRAILSCENEBODY  渲染导轨场景主体（R1）
+%RENDERRAILSCENEBODY  渲染导轨场景主体（R 系列）
 %
 % 渲染元素
 %   1) 上下导轨（两条平行线）
@@ -920,6 +1009,8 @@ info = struct( ...
     'rail_visible', false, ...
     'rod_visible', false, ...
     'resistor_visible', false, ...
+    'element_visible', false, ...
+    'element_type', "R", ...
     'trail_visible', false, ...
     'show_current', false, ...
     'current_source', "none", ...
@@ -938,6 +1029,151 @@ yTop = yCenter + halfL;
 yBottom = yCenter - halfL;
 xRod = double(pickField(state, 'x', 0.0));
 xLim = ax.XLim;
+isR8 = isR8Template(p, state);
+
+if isR8
+    [loopW, loopH] = readR8LoopSize(p, L);
+    xCenter = double(pickField(state, 'xCenter', xRod));
+    xFront = xCenter + 0.5 * loopW;
+    xBack = xFront - loopW;
+    yCenter = double(pickField(state, 'yCenter', pickField(state, 'y', pickField(p, 'yCenter', pickField(p, 'y0', yCenter)))));
+    yTop = yCenter + 0.5 * loopH;
+    yBottom = yCenter - 0.5 * loopH;
+
+    % R8 不显示导轨与左侧回路元件，仅显示矩形线框
+    hideHandle(cache.hRailTop);
+    hideHandle(cache.hRailBottom);
+    hideHandle(cache.hResistor);
+    info.resistor_visible = false;
+    info.element_visible = false;
+    info.element_type = "R";
+
+    xLoop = [xBack, xFront, xFront, xBack, xBack];
+    yLoop = [yTop, yTop, yBottom, yBottom, yTop];
+    if ~isLiveHandle(cache.hRod)
+        cache.hRod = line('Parent', ax, ...
+            'XData', xLoop, ...
+            'YData', yLoop, ...
+            'Color', [0.95, 0.20, 0.15], ...
+            'LineWidth', 3.2);
+    else
+        set(cache.hRod, 'XData', xLoop, 'YData', yLoop, 'Visible', 'on');
+    end
+    info.rail_visible = true;
+    info.rod_visible = true;
+
+    % 中心轨迹（以线框中心点为参考）
+    showTrail = logicalField(p, 'showTrail', true);
+    traj = pickField(state, 'traj', [xCenter, yCenter]);
+    if showTrail && isnumeric(traj) && size(traj, 2) == 2 && size(traj, 1) >= 1
+        trajDraw = trimTrailForRender(traj, 1600);
+        if ~isLiveHandle(cache.hTrail)
+            cache.hTrail = line('Parent', ax, ...
+                'XData', trajDraw(:, 1), ...
+                'YData', trajDraw(:, 2), ...
+                'LineStyle', '-', ...
+                'Color', [0.05, 0.75, 0.25], ...
+                'LineWidth', 2.0);
+        else
+            set(cache.hTrail, 'XData', trajDraw(:, 1), 'YData', trajDraw(:, 2), 'Visible', 'on');
+        end
+        info.trail_visible = true;
+    else
+        hideHandle(cache.hTrail);
+    end
+
+    % 速度箭头：R8 强制只向右显示
+    [cache, ~] = updateFrameVelocityArrow(ax, cache, state, p, viewSpan, xFront, yTop, loopH);
+
+    % 电流方向箭头：画在线框右侧边
+    % R8 约定：右侧边向下为顺时针（用于楞次定律可视化）
+    showCurrent = logicalField(p, 'showCurrent', false);
+    currentVal = double(pickField(state, 'current', 0.0));
+    epsilonVal = double(pickField(state, 'epsilon', 0.0));
+    currentSource = "none";
+    dirY = 0;
+    if abs(currentVal) > 1e-12
+        dirY = sign(currentVal);
+        currentSource = "current";
+    elseif abs(epsilonVal) > 1e-12
+        dirY = sign(epsilonVal);
+        currentSource = "epsilon";
+    end
+
+    if showCurrent && dirY ~= 0
+        arrLen = 0.55 * loopH;
+        xArrow = xFront;
+        if ~isLiveHandle(cache.hCurrentArrow)
+            cache.hCurrentArrow = quiver(ax, xArrow, yCenter, 0, dirY * arrLen, 0, ...
+                'AutoScale', 'off', ...
+                'Color', [0.20, 0.55, 0.98], ...
+                'LineWidth', 2.0, ...
+                'MaxHeadSize', 1.2);
+        else
+            set(cache.hCurrentArrow, ...
+                'XData', xArrow, ...
+                'YData', yCenter, ...
+                'UData', 0, ...
+                'VData', dirY * arrLen, ...
+                'Visible', 'on');
+        end
+        info.show_current = true;
+        info.current_source = currentSource;
+    else
+        hideHandle(cache.hCurrentArrow);
+    end
+
+    % 外力箭头（沿 x 轴）
+    showDrive = logicalField(p, 'showDriveForce', false) && logicalField(p, 'driveEnabled', false);
+    Fdrive = double(pickField(p, 'Fdrive', 0.0));
+    if showDrive && abs(Fdrive) > 1e-12
+        dirX = sign(Fdrive);
+        arrLen = min(max(0.12 * viewSpan, 0.25 * loopH), 0.40 * viewSpan);
+        if ~isLiveHandle(cache.hDriveArrow)
+            cache.hDriveArrow = quiver(ax, xFront, yCenter, dirX * arrLen, 0, 0, ...
+                'AutoScale', 'off', ...
+                'Color', [0.96, 0.56, 0.16], ...
+                'LineWidth', 2.0, ...
+                'MaxHeadSize', 1.2);
+        else
+            set(cache.hDriveArrow, ...
+                'XData', xFront, ...
+                'YData', yCenter, ...
+                'UData', dirX * arrLen, ...
+                'VData', 0, ...
+                'Visible', 'on');
+        end
+        info.show_drive_force = true;
+    else
+        hideHandle(cache.hDriveArrow);
+    end
+
+    % 安培力箭头（沿 x 轴）
+    showAmpere = logicalField(p, 'showAmpereForce', false);
+    fMag = double(pickField(state, 'fMag', 0.0));
+    if showAmpere && abs(fMag) > 1e-12
+        dirX = sign(fMag);
+        arrLen = min(max(0.10 * viewSpan, 0.20 * loopH), 0.35 * viewSpan);
+        if ~isLiveHandle(cache.hAmpereArrow)
+            cache.hAmpereArrow = quiver(ax, xFront, yCenter, dirX * arrLen, 0, 0, ...
+                'AutoScale', 'off', ...
+                'Color', [0.70, 0.28, 0.95], ...
+                'LineWidth', 2.0, ...
+                'MaxHeadSize', 1.2);
+        else
+            set(cache.hAmpereArrow, ...
+                'XData', xFront, ...
+                'YData', yCenter, ...
+                'UData', dirX * arrLen, ...
+                'VData', 0, ...
+                'Visible', 'on');
+        end
+        info.show_ampere_force = true;
+    else
+        hideHandle(cache.hAmpereArrow);
+    end
+    return;
+end
 
 % 上导轨
 if ~isLiveHandle(cache.hRailTop)
@@ -975,9 +1211,11 @@ end
 info.rail_visible = true;
 info.rod_visible = true;
 
-% 左侧电阻（固定在初始位置附近，不随导体棒移动）
-[cache, resistorVisible] = updateRailResistor(ax, cache, p, yBottom, yTop);
+% 左侧回路元件（固定在初始位置附近，不随导体棒移动）
+[cache, resistorVisible, elementType] = updateRailElementSymbol(ax, cache, p, yBottom, yTop);
 info.resistor_visible = logical(resistorVisible);
+info.element_visible = logical(resistorVisible);
+info.element_type = elementType;
 
 % 中心轨迹
 showTrail = logicalField(p, 'showTrail', true);
@@ -1007,16 +1245,24 @@ end
 % 方向来源
 %   1) 闭路/有电流：按 I 符号
 %   2) 开路（R1）：按感应电动势 epsilon 符号
+%
+% 符号约定说明
+%   - 当前 R 系列物理核采用：
+%       epsilon = Bz * L * vx
+%       current = epsilon / R
+%       fMag    = -Bz * current * L
+%   - 为保证“电流箭头方向”与上述符号体系一致：
+%       current > 0 时，导体棒上电流箭头应向下（-y）
 showCurrent = logicalField(p, 'showCurrent', false);
 currentVal = double(pickField(state, 'current', 0.0));
 epsilonVal = double(pickField(state, 'epsilon', 0.0));
 currentSource = "none";
 dirY = 0;
 if abs(currentVal) > 1e-12
-    dirY = sign(currentVal);
+    dirY = -sign(currentVal);
     currentSource = "current";
 elseif abs(epsilonVal) > 1e-12
-    dirY = sign(epsilonVal);
+    dirY = -sign(epsilonVal);
     currentSource = "epsilon";
 end
 
@@ -1093,38 +1339,32 @@ else
 end
 end
 
-function [cache, visible] = updateRailResistor(ax, cache, p, yBottom, yTop)
-%UPDATERAILRESISTOR  在导轨左侧绘制等效电阻（矩形符号）
+function [cache, visible, elementType] = updateRailElementSymbol(ax, cache, p, yBottom, yTop)
+%UPDATERAILELEMENTSYMBOL  在导轨左侧绘制回路元件符号（R/C/L）
+%
+% 符号约定
+%   - R：矩形电阻（原样保留）
+%   - C：两根等长平行线（电容）
+%   - L：同向半圆波浪线（电感，无铁心）
 %
 % 说明
-%   - 该电阻用于表现“导轨中间串联电阻”的场景元素
+%   - 元件位置固定在初始位置附近，不随导体棒移动
 %   - 默认位置：x0 左侧约 2.2L，可通过 p.xRes 覆盖
 visible = false;
 
 L = max(1e-3, double(pickField(p, 'L', 1.0)));
 x0 = double(pickField(p, 'x0', 0.0));
 xRes = double(pickField(p, 'xRes', x0 - 2.2 * L));
+elementType = resolveRailElementType(p);
 
-% 用“矩形 + 上下引线”表示电阻
-yCenter = 0.5 * (yTop + yBottom);
-rectH = 0.48 * max(1e-3, (yTop - yBottom));
-rectW = min(max(0.16 * L, 0.06), 0.35 * L);
-yRectTop = yCenter + 0.5 * rectH;
-yRectBottom = yCenter - 0.5 * rectH;
-xLeft = xRes - 0.5 * rectW;
-xRight = xRes + 0.5 * rectW;
-
-% 通过 NaN 分段一次画出：上引线 + 矩形边框 + 下引线
-xPts = [ ...
-    xRes, xRes, NaN, ...
-    xLeft, xRight, xRight, xLeft, xLeft, NaN, ...
-    xRes, xRes ...
-];
-yPts = [ ...
-    yTop, yRectTop, NaN, ...
-    yRectTop, yRectTop, yRectBottom, yRectBottom, yRectTop, NaN, ...
-    yRectBottom, yBottom ...
-];
+switch elementType
+    case "C"
+        [xPts, yPts] = buildRailCapacitorPath(xRes, yBottom, yTop, L);
+    case "L"
+        [xPts, yPts] = buildRailInductorPath(xRes, yBottom, yTop, L);
+    otherwise
+        [xPts, yPts] = buildRailResistorPath(xRes, yBottom, yTop, L);
+end
 
 if ~isLiveHandle(cache.hResistor)
     cache.hResistor = line('Parent', ax, ...
@@ -1140,6 +1380,103 @@ else
 end
 
 visible = true;
+end
+
+function [xPts, yPts] = buildRailResistorPath(xRes, yBottom, yTop, L)
+%BUILDRAILRESISTORPATH  电阻符号路径（矩形 + 上下引线）
+yCenter = 0.5 * (yTop + yBottom);
+rectH = 0.48 * max(1e-3, (yTop - yBottom));
+rectW = min(max(0.16 * L, 0.06), 0.35 * L);
+yRectTop = yCenter + 0.5 * rectH;
+yRectBottom = yCenter - 0.5 * rectH;
+xLeft = xRes - 0.5 * rectW;
+xRight = xRes + 0.5 * rectW;
+
+xPts = [ ...
+    xRes, xRes, NaN, ...
+    xLeft, xRight, xRight, xLeft, xLeft, NaN, ...
+    xRes, xRes ...
+];
+yPts = [ ...
+    yTop, yRectTop, NaN, ...
+    yRectTop, yRectTop, yRectBottom, yRectBottom, yRectTop, NaN, ...
+    yRectBottom, yBottom ...
+];
+end
+
+function [xPts, yPts] = buildRailCapacitorPath(xRes, yBottom, yTop, L)
+%BUILDRAILCAPACITORPATH  电容符号路径（双平行线 + 上下引线）
+yCenter = 0.5 * (yTop + yBottom);
+gap = min(max(0.10 * L, 0.05), 0.28 * L);
+plateLen = min(max(0.42 * L, 0.16), 0.90 * L);
+yPlateTop = yCenter + 0.5 * gap;
+yPlateBottom = yCenter - 0.5 * gap;
+xLeft = xRes - 0.5 * plateLen;
+xRight = xRes + 0.5 * plateLen;
+
+xPts = [ ...
+    xRes, xRes, NaN, ...
+    xLeft, xRight, NaN, ...
+    xLeft, xRight, NaN, ...
+    xRes, xRes ...
+];
+yPts = [ ...
+    yTop, yPlateTop, NaN, ...
+    yPlateTop, yPlateTop, NaN, ...
+    yPlateBottom, yPlateBottom, NaN, ...
+    yPlateBottom, yBottom ...
+];
+end
+
+function [xPts, yPts] = buildRailInductorPath(xRes, yBottom, yTop, L)
+%BUILDRAILINDUCTORPATH  电感符号路径（同向半圆波浪线，无铁心）
+%
+% 几何约定
+%   - 所有半圆都向同一侧鼓出（右侧）
+%   - 不绘制铁心横线，保持“空心电感”语义
+yCenter = 0.5 * (yTop + yBottom);
+coilHeight = min(max(0.62 * L, 0.22), 0.92 * max(1e-3, yTop - yBottom));
+nTurns = 4;
+r = coilHeight / (2.0 * nTurns);
+yCoilTop = yCenter + 0.5 * coilHeight;
+yCoilBottom = yCenter - 0.5 * coilHeight;
+
+xArcAll = [];
+yArcAll = [];
+theta = linspace(pi/2, -pi/2, 20);
+for i = 1:nTurns
+    yMid = yCoilTop - (2 * i - 1) * r;
+    xArc = xRes + r * cos(theta);
+    yArc = yMid + r * sin(theta);
+    if i > 1
+        xArc = xArc(2:end);
+        yArc = yArc(2:end);
+    end
+    xArcAll = [xArcAll, xArc]; %#ok<AGROW>
+    yArcAll = [yArcAll, yArc]; %#ok<AGROW>
+end
+
+xPts = [xRes, xRes, NaN, xArcAll, NaN, xRes, xRes];
+yPts = [yTop, yCoilTop, NaN, yArcAll, NaN, yCoilBottom, yBottom];
+end
+
+function elementType = resolveRailElementType(p)
+%RESOLVERAILELEMENTTYPE  解析回路元件类型（R/C/L）
+elementType = upper(strtrim(string(pickField(p, 'elementType', "R"))));
+if ~any(elementType == ["R", "C", "L"])
+    elementType = "R";
+end
+end
+
+function [loopW, loopH] = readR8LoopSize(p, fallbackL)
+%READR8LOOPSIZE  读取 R8 线框宽高（兼容 w/W 与 h/H 字段）
+%
+% 说明
+%   - 兼容 UI 可能输出的大小写字段
+%   - 缺省时退回到 L 的量级
+L = max(1e-3, double(fallbackL));
+loopW = max(1e-3, double(pickField(p, 'w', pickField(p, 'W', 1.2 * L))));
+loopH = max(1e-3, double(pickField(p, 'h', pickField(p, 'H', L))));
 end
 
 %% 动态箭头（速度/受力）
@@ -1210,6 +1547,44 @@ else
         'XData', xRod, ...
         'YData', anchorY, ...
         'UData', dirX * arrowLen, ...
+        'VData', 0, ...
+        'Visible', 'on');
+end
+
+info.visible = true;
+info.arrow_len = arrowLen;
+end
+
+function [cache, info] = updateFrameVelocityArrow(ax, cache, state, p, viewSpan, xFront, yTop, loopH)
+%UPDATEFRAMEVELOCITYARROW  更新 R8 线框速度箭头（仅向右）
+%
+% 设计约束
+%   - R8 场景速度箭头始终朝 +x 显示
+%   - 速度数值取 |vx|，与“只能朝右”语义保持一致
+info = struct('visible', false, 'show_switch', false, 'speed', 0.0, 'arrow_len', 0.0);
+showV = logicalField(p, 'showV', true);
+speed = abs(double(pickField(state, 'vx', 0.0)));
+info.show_switch = showV;
+info.speed = speed;
+if ~showV || speed <= 1e-12
+    hideHandle(cache.hVel);
+    return;
+end
+
+arrowLen = min(max(0.14 * viewSpan, 0.50 * loopH), 0.55 * viewSpan);
+anchorY = yTop + 0.16 * loopH;
+
+if ~isLiveHandle(cache.hVel)
+    cache.hVel = quiver(ax, xFront, anchorY, arrowLen, 0, 0, ...
+        'AutoScale', 'off', ...
+        'Color', [0.95, 0.25, 0.20], ...
+        'LineWidth', 2.3, ...
+        'MaxHeadSize', 1.5);
+else
+    set(cache.hVel, ...
+        'XData', xFront, ...
+        'YData', anchorY, ...
+        'UData', arrowLen, ...
         'VData', 0, ...
         'Visible', 'on');
 end

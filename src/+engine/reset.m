@@ -73,6 +73,11 @@ end
 %% 导轨模型（R 系列）重置
 function state = resetRailState(state, params)
 %RESETRAILSTATE  重置 R 系列导轨状态
+if isR8Template(params)
+    state = resetR8FrameState(state, params);
+    return;
+end
+
 state.t = 0.0;
 state.modelType = "rail";
 state.x = pickField(params, 'x0', 0.0);
@@ -83,6 +88,8 @@ state.vy = 0.0;
 state.traj = [state.x, state.y];
 state.stepCount = 0;
 state.qHeat = 0.0;
+state.iBranch = 0.0;
+state.aBranch = 0.0;
 
 inField = isRailInField([state.x; state.y], params);
 state.inField = inField;
@@ -97,8 +104,52 @@ else
     state.mode = "rail_unbounded";
 end
 
+% R2LC 分支初值
+elementType = resolveRailElement(params);
+if elementType == "L" && inField && logicalField(params, 'loopClosed', false)
+    state.iBranch = double(pickField(params, 'i0', 0.0));
+end
+
 state = attachRailOutputs(state, params, inField);
 
+end
+
+function state = resetR8FrameState(state, params)
+%RESETR8FRAMESTATE  重置 R8 线框状态（中心坐标）
+state.t = 0.0;
+state.modelType = "rail";
+state.x = double(pickField(params, 'xCenter', pickField(params, 'x0', 0.0)));
+state.y = double(pickField(params, 'yCenter', pickField(params, 'y0', 0.0)));
+state.xCenter = state.x;
+state.yCenter = state.y;
+state.vx = abs(double(pickField(params, 'v0', 0.0)));
+state.vy = 0.0;
+state.traj = [state.x, state.y];
+state.stepCount = 0;
+state.qHeat = 0.0;
+state.iBranch = 0.0;
+state.aBranch = 0.0;
+
+out = physics.frameStripOutputs(state.x, state.vx, params);
+state.inField = logical(out.inField);
+state.xFront = double(out.xFront);
+state.xBack = double(out.xBack);
+
+if logicalField(params, 'driveEnabled', false)
+    if state.inField
+        state.mode = "r8_damped_infield";
+    else
+        state.mode = "r8_damped_free";
+    end
+else
+    if state.inField
+        state.mode = "r8_uniform_infield";
+    else
+        state.mode = "r8_uniform_free";
+    end
+end
+
+state = attachR8Outputs(state, params, out, double(pickField(params, 'Fdrive', 0.0)));
 end
 
 %% 速度选择器模型（M4）重置
@@ -143,14 +194,82 @@ end
 
 %% 输出挂载与模型判定
 function state = attachRailOutputs(state, params, inField)
-%ATTACHRAILOUTPUTS  计算并挂载 R 系列输出量
+%ATTACHRAILOUTPUTS  计算并挂载 R 系列输出量（R/C/L）
+if isR8Template(params)
+    out = physics.frameStripOutputs(double(pickField(state, 'x', 0.0)), double(pickField(state, 'vx', 0.0)), params);
+    state.iBranch = double(out.current);
+    state.inField = logical(out.inField);
+    state.xFront = double(out.xFront);
+    state.xBack = double(out.xBack);
+    state = attachR8Outputs(state, params, out, double(pickField(params, 'Fdrive', 0.0)));
+    return;
+end
+
 vx = double(pickField(state, 'vx', 0.0));
 L = max(double(pickField(params, 'L', 1.0)), 1e-9);
 R = max(double(pickField(params, 'R', 1.0)), 1e-12);
+K = engine.helpers.signedBFromParams(params) * L;
+elementType = resolveRailElement(params);
 loopClosed = logicalField(params, 'loopClosed', false);
-Bz = engine.helpers.signedBFromParams(params);
 Fdrive = double(pickField(params, 'Fdrive', 0.0));
-out = physics.railOutputsNoFriction(vx, L, R, Bz, logical(inField), loopClosed, Fdrive);
+
+useCoupling = logical(inField) && loopClosed;
+switch elementType
+    case "C"
+        Cval = max(double(pickField(params, 'C', 1.0)), 1e-12);
+        if useCoupling
+            m = max(double(pickField(params, 'm', 1.0)), 1e-12);
+            mEff = m + Cval * (K^2);
+            accel = Fdrive / max(mEff, 1e-12);
+            current = Cval * K * accel;
+            epsilon = K * vx;
+            fMag = -K * current;
+            pElec = epsilon * current;
+            qHeat = 0.5 * Cval * epsilon^2;
+        else
+            accel = Fdrive / max(double(pickField(params, 'm', 1.0)), 1e-12);
+            current = 0.0;
+            epsilon = 0.0;
+            fMag = 0.0;
+            pElec = 0.0;
+            qHeat = 0.0;
+        end
+        state.aBranch = accel;
+        state.iBranch = current;
+        state.qHeat = qHeat;
+        out = struct('epsilon', epsilon, 'current', current, 'fMag', fMag, 'pElec', pElec, 'pMech', Fdrive * vx);
+    case "L"
+        LsVal = max(double(pickField(params, 'Ls', 1.0)), 1e-12);
+        if useCoupling
+            current = double(pickField(state, 'iBranch', 0.0));
+            epsilon = K * vx;
+            fMag = -K * current;
+            pElec = epsilon * current;
+            qHeat = 0.5 * LsVal * current^2;
+            accel = (Fdrive - K * current) / max(double(pickField(params, 'm', 1.0)), 1e-12);
+        else
+            current = 0.0;
+            epsilon = 0.0;
+            fMag = 0.0;
+            pElec = 0.0;
+            qHeat = 0.0;
+            accel = Fdrive / max(double(pickField(params, 'm', 1.0)), 1e-12);
+        end
+        state.aBranch = accel;
+        state.iBranch = current;
+        state.qHeat = qHeat;
+        out = struct('epsilon', epsilon, 'current', current, 'fMag', fMag, 'pElec', pElec, 'pMech', Fdrive * vx);
+    otherwise
+        Bz = engine.helpers.signedBFromParams(params);
+        out = physics.railOutputsNoFriction(vx, L, R, Bz, logical(inField), loopClosed, Fdrive);
+        m = max(double(pickField(params, 'm', 1.0)), 1e-12);
+        k = engine.helpers.railDampingK(Bz, L, R);
+        if useCoupling
+            state.aBranch = (Fdrive - k * vx) / m;
+        else
+            state.aBranch = Fdrive / m;
+        end
+end
 
 state.epsilon = out.epsilon;
 state.current = out.current;
@@ -162,6 +281,7 @@ if ~isfield(state, 'qHeat')
 end
 
 state.rail = struct( ...
+    'elementType', elementType, ...
     'L', L, ...
     'x', double(state.x), ...
     'yCenter', double(state.y), ...
@@ -173,6 +293,39 @@ state.rail = struct( ...
     'qHeat', double(state.qHeat) ...
 );
 
+end
+
+function state = attachR8Outputs(state, params, out, Fdrive)
+%ATTACHR8OUTPUTS  写回 R8 输出字段（与曲线/输出区直接对接）
+state.epsilon = double(out.epsilon);
+state.current = double(out.current);
+state.fMag = double(out.fMag);
+state.pElec = double(out.pElec);
+state.pMech = double(Fdrive) * double(state.vx);
+
+loopH = max(double(pickField(params, 'h', pickField(params, 'H', pickField(params, 'L', 1.0)))), 1e-9);
+if ~isfield(state, 'qHeat')
+    state.qHeat = 0.0;
+end
+
+state.rail = struct( ...
+    'elementType', "R", ...
+    'L', loopH, ...
+    'w', double(out.w), ...
+    'h', double(out.h), ...
+    'x', double(state.x), ...
+    'xFront', double(out.xFront), ...
+    'xBack', double(out.xBack), ...
+    'inField', logical(out.inField), ...
+    'overlap', double(out.overlap), ...
+    'sPrime', double(out.sPrime), ...
+    'phi', double(out.phi), ...
+    'epsilon', double(out.epsilon), ...
+    'current', double(out.current), ...
+    'fMag', double(out.fMag), ...
+    'pElec', double(out.pElec), ...
+    'qHeat', double(state.qHeat) ...
+);
 end
 
 function state = attachSelectorOutputs(state, params, inField)
@@ -199,8 +352,28 @@ if ~logicalField(params, 'bounded', false)
     inField = true;
     return;
 end
+if isR8Template(params)
+    % R8 语义：是否“在场内”由重叠宽度 s(x) 决定，而非中心点位置
+    out = physics.frameStripOutputs(double(r(1)), 0.0, params);
+    inField = logical(out.inField);
+    return;
+end
 box = geom.readBoundsFromParams(params);
 inField = geom.isInsideBounds(r, box);
+end
+
+function elementType = resolveRailElement(params)
+%RESOLVERAILELEMENT  解析 R 系列回路元件类型（R/C/L）
+elementType = upper(strtrim(string(pickField(params, 'elementType', "R"))));
+if ~any(elementType == ["R","C","L"])
+    elementType = "R";
+end
+end
+
+function tf = isR8Template(params)
+%ISR8TEMPLATE  判断当前是否 R8 线框模板
+token = upper(strtrim(string(pickField(params, 'templateId', ""))));
+tf = token == "R8";
 end
 
 function modelType = resolveModelType(params)
@@ -236,3 +409,4 @@ else
     v = fallback;
 end
 end
+

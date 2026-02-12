@@ -40,13 +40,24 @@ end
 
 % 命令行输出策略：
 %   - 默认输出，便于无界面调试
-%   - 若 App 提供 shouldEchoLogToConsole(level) 策略，则按策略决定
+%   - 若 App 提供 shouldEchoLogToConsole 策略，则按策略决定
 shouldEcho = true;
 if ~isempty(app) && isa(app, 'handle') && isvalidHandle(app) && ismethod(app, 'shouldEchoLogToConsole')
     try
-        shouldEcho = logical(app.shouldEchoLogToConsole(entry.level));
+        % 新签名：传完整 entry，便于按事件名做精细过滤
+        shouldEcho = logical(app.shouldEchoLogToConsole(entry));
     catch
-        shouldEcho = true;
+        try
+            % 兼容签名：level + event
+            shouldEcho = logical(app.shouldEchoLogToConsole(entry.level, entry.event));
+        catch
+            try
+                % 兼容旧签名：只传 level
+                shouldEcho = logical(app.shouldEchoLogToConsole(entry.level));
+            catch
+                shouldEcho = true;
+            end
+        end
     end
 end
 

@@ -7,8 +7,9 @@
 %   state : 当前仿真状态结构
 %
 % 行为
-%   1) 若存在 viz.renderScene，则尝试渲染场景
-%   2) 若存在 viz.renderPlots，则尝试渲染曲线
+%   1) 按当前 CenterTabs 焦点选择渲染目标
+%   2) 场景页：仅渲染场景
+%   3) 曲线页：仅渲染曲线
 %   3) 任一子渲染失败仅写日志，不中断主流程
 %
 % 设计说明
@@ -20,7 +21,9 @@ arguments
     state (1,1) struct
 end
 
-if hasFunction('viz.renderScene')
+[shouldRenderSceneNow, shouldRenderPlotsNow] = resolveRenderTargets(app);
+
+if shouldRenderSceneNow && hasFunction('viz.renderScene')
     try
         viz.renderScene(app, state);
     catch err
@@ -28,12 +31,51 @@ if hasFunction('viz.renderScene')
     end
 end
 
-if hasFunction('viz.renderPlots')
+if shouldRenderPlotsNow && hasFunction('viz.renderPlots')
     try
         viz.renderPlots(app, state);
     catch err
         logger.logEvent(app, '错误', '曲线渲染失败', struct('reason', err.message));
     end
+end
+end
+
+%% 渲染目标判定
+function [sceneOn, plotsOn] = resolveRenderTargets(app)
+%RESOLVERENDERTARGETS  根据当前中心 Tab 决定本帧渲染目标
+%
+% 返回
+%   sceneOn : 是否渲染场景
+%   plotsOn : 是否渲染曲线
+%
+% 规则
+%   - 选中“场景”页：sceneOn=true,  plotsOn=false
+%   - 选中“曲线”页：sceneOn=false, plotsOn=true
+%   - 无法判定（兼容旧 UI）：两者都为 true
+sceneOn = true;
+plotsOn = true;
+
+if ~(isprop(app, 'CenterTabs') && isgraphics(app.CenterTabs))
+    return;
+end
+if ~(isprop(app, 'SceneTab') && isgraphics(app.SceneTab))
+    return;
+end
+if ~(isprop(app, 'PlotsTab') && isgraphics(app.PlotsTab))
+    return;
+end
+
+try
+    selected = app.CenterTabs.SelectedTab;
+    if isequal(selected, app.SceneTab)
+        sceneOn = true;
+        plotsOn = false;
+    elseif isequal(selected, app.PlotsTab)
+        sceneOn = false;
+        plotsOn = true;
+    end
+catch
+    % 读取失败时保留双渲染兜底
 end
 end
 

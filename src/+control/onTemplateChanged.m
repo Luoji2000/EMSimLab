@@ -160,9 +160,9 @@ if strlength(token) == 0
     return;
 end
 
-% 兼容旧模板编号：R1/R2/R3/R4 -> R
+% 兼容旧模板编号：R1/R2/R3/R4 -> R（R8 保持独立）
 tokenUpper = upper(token);
-if ~isempty(regexp(tokenUpper, '^R[0-9]+$', 'once'))
+if any(tokenUpper == ["R1","R2","R3","R4"])
     tplId = "R";
     return;
 end

@@ -1,5 +1,13 @@
 ﻿# 更新日志
 
+## 2026-02-12
+- 新增：R2LC 核心物理核接入（同一 `R` 模板内按 `elementType=R/C/L` 切换），电容分支采用等效质量递推，电感分支采用闭式旋转递推。
+- 新增：`src/+physics/railAdvanceCapacitor.m` 与 `src/+physics/railAdvanceInductor.m`，将 R2LC 核心公式从流程控制中抽离。
+- 重构：`src/+engine/reset.m` 与 `src/+engine/step.m` 的 rail 分支升级为 R/C/L 三分支，补齐 `iBranch/aBranch` 状态与输出挂载。
+- 参数：`schema_get("rail")` 新增 `elementType/C/Ls`，`params.validate` 新增 `applyRailRules`（C/L 强制闭路与外力驱动）。
+- UI：`m/R2_for_test.m` 新增“回路元件（电阻/电容/电感）”控件，并按元件类型动态切换参数标签（`R/C/Ls`）与输出标签（`Q/U_C/U_L`）。
+- 调整：`src/+templates/registry.m` 回归单一 R 模板入口（移除 `R2LC` 独立模板注册），保持“R2LC 作为 R2 场景扩展”的设计。
+
 ## 2026-02-11
 - 文档：`docs/中文技术文档.md` 新增“新手版函数链条拆解”“递归与循环说明”“关键文件总入口速查”，明确按钮触发后的完整调用路径。
 - 文档：补充“主业务链无递归、播放为定时器循环、递归仅用于模板树节点查找（findNodeById）”说明，降低新手阅读成本。
