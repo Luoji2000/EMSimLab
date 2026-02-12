@@ -1,6 +1,12 @@
 ﻿# 更新日志
 
 ## 2026-02-12
+- 测试：`tests/smoke.m` 批跑入口改为基于 `nargout` 判定是否接收返回值，修复中文 MATLAB 环境下“输出参数太多”文本不匹配导致的误失败。
+- 测试：重写 `tests/smoke.m` 批量入口，改为按 `smoke_*.m` 函数名 `feval` 执行，兼容“有返回值/无返回值”两类 smoke 用例，并在失败时统一汇总并抛错。
+- 重构：新增 `src/+engine/+helpers/attachRailOutputsCommon.m`，统一 R/C/L + R8 输出挂载；`src/+engine/step.m` 与 `src/+engine/reset.m` 的 `attachRailOutputs` 改为薄封装委托，减少双份公式维护风险。
+- 一致性：`src/+viz/renderScene.m` 的 R8 渲染优先使用 `state.xFront/state.xBack`（源于 `frameStripOutputs`），仅在旧状态缺失时回退几何推导，确保渲染几何与物理输出口径一致。
+- 一致性：`src/+viz/renderScene.m` 补充 R8 电流箭头方向注释，明确按 `frameStripOutputs` 的 `current/epsilon` 符号口径渲染（保持“出屏磁场进入阶段右侧边向下”）。
+- 公式：`src/+viz/renderPlots.m` 的 `computeFrameFlux` 改为直接复用 `physics.frameStripOutputs` 真源输出（`out.phi`），移除渲染层重复磁通公式，避免口径漂移。
 - 规范：补齐 `src/+engine/step.m`、`src/+engine/reset.m` 及 `src/+engine/+helpers/*.m` 的函数注释模板（用途/输入/输出/说明），局部临时函数同步采用同一规范。
 - 重构：新增 `src/+engine/+helpers/isR8Template.m`、`src/+engine/+helpers/resolveRailElement.m`、`src/+engine/+helpers/resolveModelType.m`，统一模板与模型判定逻辑；`src/+engine/step.m` 与 `src/+engine/reset.m` 对应本地函数改为委托共享实现（行为不变）。
 - 文档：新增 `docs/参考手册/09_引擎共享助手与去重规范.md`，并在 `docs/参考手册/00_索引.md` 增加入口。

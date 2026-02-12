@@ -498,10 +498,11 @@ end
 
 %% 输出挂载与模型判定
 function state = attachRailOutputs(state, params, inField)
-%ATTACHRAILOUTPUTS  计算并挂载 R 系列输出量（R/C/L）
+%ATTACHRAILOUTPUTS  计算并挂载 R 系列输出量（共享助手委托）
 %
 % 用途
-%   - 见函数标题与下方输入/输出/说明小节。
+%   - 为 step 层提供稳定入口，把 R/C/L + R8 输出挂载统一委托到
+%     engine.helpers.attachRailOutputsCommon，避免 step/reset 双份公式漂移。
 %
 % 输入
 %   state   (1,1) struct
@@ -513,105 +514,11 @@ function state = attachRailOutputs(state, params, inField)
 %
 % 输出
 %   state   (1,1) struct
-%     已写入 epsilon/current/fMag/pElec/pMech 及 state.rail 的状态。
+%     已写入 epsilon/current/fMag/pElec/pMech 与 state.rail 的状态结构。
 %
 % 说明
-%   - R8 分支直接复用 frameStripOutputs 真源。
-%   - R/C/L 分支按教学口径分别计算对应输出量。
-if isR8Template(params)
-    out = physics.frameStripOutputs(double(pickField(state, 'x', 0.0)), double(pickField(state, 'vx', 0.0)), params);
-    state.iBranch = double(out.current);
-    state.aBranch = double(pickField(state, 'aBranch', 0.0));
-    state.inField = logical(out.inField);
-    state.xFront = double(out.xFront);
-    state.xBack = double(out.xBack);
-    state = attachR8Outputs(state, params, out, double(pickField(params, 'Fdrive', 0.0)));
-    return;
-end
-
-vx = double(pickField(state, 'vx', 0.0));
-L = max(double(pickField(params, 'L', 1.0)), 1e-9);
-R = max(double(pickField(params, 'R', 1.0)), 1e-12);
-K = engine.helpers.signedBFromParams(params) * L;
-elementType = resolveRailElement(params);
-loopClosed = logicalField(params, 'loopClosed', false);
-Fdrive = double(pickField(params, 'Fdrive', 0.0));
-
-useCoupling = logical(inField) && loopClosed;
-switch elementType
-    case "C"
-        Cval = max(double(pickField(params, 'C', 1.0)), 1e-12);
-        if useCoupling
-            m = max(double(pickField(params, 'm', 1.0)), 1e-12);
-            mEff = m + Cval * (K^2);
-            accel = Fdrive / max(mEff, 1e-12);
-            current = Cval * K * accel;
-            epsilon = K * vx;
-            fMag = -K * current;
-            pElec = epsilon * current;
-            qHeat = 0.5 * Cval * epsilon^2;
-        else
-            accel = Fdrive / max(double(pickField(params, 'm', 1.0)), 1e-12);
-            current = 0.0;
-            epsilon = 0.0;
-            fMag = 0.0;
-            pElec = 0.0;
-            qHeat = 0.0;
-        end
-        state.aBranch = accel;
-        state.iBranch = current;
-        state.qHeat = qHeat;
-        out = struct('epsilon', epsilon, 'current', current, 'fMag', fMag, 'pElec', pElec, 'pMech', Fdrive * vx);
-    case "L"
-        LsVal = max(double(pickField(params, 'Ls', 1.0)), 1e-12);
-        if useCoupling
-            current = double(pickField(state, 'iBranch', 0.0));
-            epsilon = K * vx;
-            fMag = -K * current;
-            pElec = epsilon * current;
-            qHeat = 0.5 * LsVal * current^2;
-            accel = (Fdrive - K * current) / max(double(pickField(params, 'm', 1.0)), 1e-12);
-        else
-            current = 0.0;
-            epsilon = 0.0;
-            fMag = 0.0;
-            pElec = 0.0;
-            qHeat = 0.0;
-            accel = Fdrive / max(double(pickField(params, 'm', 1.0)), 1e-12);
-        end
-        state.aBranch = accel;
-        state.iBranch = current;
-        state.qHeat = qHeat;
-        out = struct('epsilon', epsilon, 'current', current, 'fMag', fMag, 'pElec', pElec, 'pMech', Fdrive * vx);
-    otherwise
-        Bz = engine.helpers.signedBFromParams(params);
-        out = physics.railOutputsNoFriction(vx, L, R, Bz, logical(inField), loopClosed, Fdrive);
-        m = max(double(pickField(params, 'm', 1.0)), 1e-12);
-        k = engine.helpers.railDampingK(Bz, L, R);
-        if useCoupling
-            state.aBranch = (Fdrive - k * vx) / m;
-        else
-            state.aBranch = Fdrive / m;
-        end
-end
-
-state.epsilon = out.epsilon;
-state.current = out.current;
-state.fMag = out.fMag;
-state.pElec = out.pElec;
-state.pMech = out.pMech;
-state.rail = struct( ...
-    'elementType', elementType, ...
-    'L', L, ...
-    'x', double(state.x), ...
-    'yCenter', double(state.y), ...
-    'inField', logical(inField), ...
-    'epsilon', out.epsilon, ...
-    'current', out.current, ...
-    'fMag', out.fMag, ...
-    'pElec', out.pElec, ...
-    'qHeat', double(pickField(state, 'qHeat', 0.0)) ...
-);
+%   - 具体公式仍由 physics.* 与 helpers 内部统一维护，本函数保持薄封装。
+state = engine.helpers.attachRailOutputsCommon(state, params, logical(inField));
 end
 
 function state = attachSelectorOutputs(state, params, inField)

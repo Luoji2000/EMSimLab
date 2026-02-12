@@ -367,36 +367,28 @@ end
 
 %% R8 线框磁通量计算
 function phi = computeFrameFlux(params, state)
-%COMPUTEFRAMEFLUX  由几何重叠计算线框磁通量 Phi = B * h * s(x_f)
-
-Bz = resolveSignedBz(params);
-hVal = max(toDouble(pickField(params, 'h', pickField(params, 'H', 1.0)), 1.0), 1e-9);
-wVal = max(toDouble(pickField(params, 'w', pickField(params, 'W', 1.0)), 1.0), 1e-9);
-
-xL = toDouble(pickField(params, 'xMin', pickField(params, 'xL', 0.0)), 0.0);
+%COMPUTEFRAMEFLUX  复用 R8 公式真源计算线框磁通量 Phi
+%
+% 用途
+%   - 为曲线区提供当前时刻的磁通量采样值。
+%
+% 输入
+%   params (1,1) struct
+%     当前参数结构（R8 场景下包含几何与磁场参数）。
+%   state  (1,1) struct
+%     当前状态结构（用于解析线框中心坐标）。
+%
+% 输出
+%   phi (1,1) double
+%     当前时刻磁通量 Phi。
+%
+% 说明
+%   - 历史版本曾在渲染层内重复实现 overlap/Bz/h 公式。
+%   - 为避免“渲染层公式”与“物理真源”漂移，这里统一调用
+%     physics.frameStripOutputs，并直接读取 out.phi。
 xCenter = resolveFrameCenterX(params, state);
-xFront = xCenter + 0.5 * wVal;
-xBack = xCenter - 0.5 * wVal;
-
-if isR8Template(params, state)
-    % R8：竖直条带磁场 [xMin, xMax]，y 方向无界
-    xR = toDouble(pickField(params, 'xMax', pickField(params, 'xR', xL + 4.0)), xL + 4.0);
-    if xL > xR
-        tmp = xL;
-        xL = xR;
-        xR = tmp;
-    end
-    overlap = max(0.0, min(xFront, xR) - max(xBack, xL));
-else
-    xR = toDouble(pickField(params, 'xMax', pickField(params, 'xR', xL + 1.0)), xL + 1.0);
-    if xL > xR
-        tmp = xL;
-        xL = xR;
-        xR = tmp;
-    end
-    overlap = max(0.0, min(xFront, xR) - max(xBack, xL));
-end
-phi = Bz * hVal * overlap;
+out = physics.frameStripOutputs(double(xCenter), 0.0, params);
+phi = double(out.phi);
 end
 
 function xCenter = resolveFrameCenterX(params, state)
@@ -412,17 +404,6 @@ xCenter = toDouble( ...
     pickField(state, 'x', ...
     pickField(params, 'xCenter', ...
     pickField(params, 'x0', 0.0)))), 0.0);
-end
-
-function Bz = resolveSignedBz(params)
-%RESOLVESIGNEDBZ  解析带方向符号的 Bz
-B = abs(toDouble(pickField(params, 'B', 0.0), 0.0));
-dirToken = lower(strtrim(string(pickField(params, 'Bdir', "out"))));
-if dirToken == "in"
-    Bz = -B;
-else
-    Bz = B;
-end
 end
 
 %% 占位提示与默认缓存

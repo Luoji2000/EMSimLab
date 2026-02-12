@@ -1033,9 +1033,20 @@ isR8 = isR8Template(p, state);
 
 if isR8
     [loopW, loopH] = readR8LoopSize(p, L);
-    xCenter = double(pickField(state, 'xCenter', xRod));
-    xFront = xCenter + 0.5 * loopW;
-    xBack = xFront - loopW;
+    xCenterState = double(pickField(state, 'xCenter', xRod));
+    xFrontState = double(pickField(state, 'xFront', NaN));
+    xBackState = double(pickField(state, 'xBack', NaN));
+    if isfinite(xFrontState) && isfinite(xBackState) && (xFrontState >= xBackState)
+        % 优先使用引擎源输出（frameStripOutputs）给出的前后沿，保证渲染口径与物理口径一致。
+        xFront = xFrontState;
+        xBack = xBackState;
+        xCenter = 0.5 * (xFront + xBack);
+    else
+        % 兼容旧状态：若未提供前后沿字段，再回退为“中心+宽度”几何推导。
+        xCenter = xCenterState;
+        xFront = xCenter + 0.5 * loopW;
+        xBack = xCenter - 0.5 * loopW;
+    end
     yCenter = double(pickField(state, 'yCenter', pickField(state, 'y', pickField(p, 'yCenter', pickField(p, 'y0', yCenter)))));
     yTop = yCenter + 0.5 * loopH;
     yBottom = yCenter - 0.5 * loopH;
@@ -1086,7 +1097,11 @@ if isR8
     [cache, ~] = updateFrameVelocityArrow(ax, cache, state, p, viewSpan, xFront, yTop, loopH);
 
     % 电流方向箭头：画在线框右侧边
-    % R8 约定：右侧边向下为顺时针（用于楞次定律可视化）
+    %
+    % 方向约定（R8 专用）
+    %   - R8 公式真源采用 epsilon = -Bz*h*sPrime*vx（frameStripOutputs）
+    %   - 因此右侧边箭头方向直接跟随 sign(current)/sign(epsilon)
+    %   - 该口径下，“出屏磁场进入阶段”会显示顺时针（右侧边向下）
     showCurrent = logicalField(p, 'showCurrent', false);
     currentVal = double(pickField(state, 'current', 0.0));
     epsilonVal = double(pickField(state, 'epsilon', 0.0));
